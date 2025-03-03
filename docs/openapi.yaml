@@ -1,0 +1,414 @@
+openapi: 3.1.0
+info:
+  title: MeetSync API
+  description: API for scheduling meetings and managing availability
+  version: 1.0.0
+  contact:
+    name: MeetSync Team
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+tags:
+  - name: Users
+    description: User management operations
+  - name: Meetings
+    description: Meeting management operations
+  - name: Availability
+    description: Availability management operations
+  - name: Recommendations
+    description: Meeting time recommendations
+
+paths:
+  /api/users:
+    post:
+      tags:
+        - Users
+      summary: Create a new user
+      description: Creates a new user in the system
+      operationId: createUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '201':
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateUserResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Email already in use
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    get:
+      tags:
+        - Users
+      summary: List all users
+      description: Returns a list of all users in the system
+      operationId: listUsers
+      responses:
+        '200':
+          description: List of users
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListUsersResponse'
+
+  /api/users/{id}:
+    get:
+      tags:
+        - Users
+      summary: Get a user by ID
+      description: Returns a user by their ID
+      operationId: getUser
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: User ID
+      responses:
+        '200':
+          description: User found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetUserResponse'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/meetings:
+    post:
+      tags:
+        - Meetings
+      summary: Create a new meeting
+      description: Creates a new meeting with proposed time slots
+      operationId: createMeeting
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateMeetingRequest'
+      responses:
+        '201':
+          description: Meeting created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateMeetingResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/availabilities:
+    post:
+      tags:
+        - Availability
+      summary: Add availability for a meeting
+      description: Adds a participant's availability for a meeting
+      operationId: addAvailability
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddAvailabilityRequest'
+      responses:
+        '201':
+          description: Availability added successfully
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: User or meeting not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/recommendations:
+    get:
+      tags:
+        - Recommendations
+      summary: Get meeting time recommendations
+      description: Returns recommended time slots for a meeting based on participants' availability
+      operationId: getRecommendations
+      parameters:
+        - name: meetingId
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Meeting ID
+      responses:
+        '200':
+          description: Recommendations found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetRecommendationsResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Meeting not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Unique identifier for the user
+        name:
+          type: string
+          description: User's name
+        email:
+          type: string
+          format: email
+          description: User's email address
+        createdAt:
+          type: string
+          format: date-time
+          description: When the user was created
+        updatedAt:
+          type: string
+          format: date-time
+          description: When the user was last updated
+      required:
+        - id
+        - name
+        - email
+        - createdAt
+        - updatedAt
+
+    TimeSlot:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Unique identifier for the time slot
+        startTime:
+          type: string
+          format: date-time
+          description: Start time of the slot
+        endTime:
+          type: string
+          format: date-time
+          description: End time of the slot
+      required:
+        - id
+        - startTime
+        - endTime
+
+    Meeting:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Unique identifier for the meeting
+        title:
+          type: string
+          description: Meeting title
+        organizerId:
+          type: string
+          description: ID of the meeting organizer
+        organizer:
+          $ref: '#/components/schemas/User'
+        estimatedDuration:
+          type: integer
+          description: Estimated duration of the meeting in minutes
+        proposedSlots:
+          type: array
+          items:
+            $ref: '#/components/schemas/TimeSlot'
+          description: Proposed time slots for the meeting
+        participants:
+          type: array
+          items:
+            $ref: '#/components/schemas/User'
+          description: Meeting participants
+        createdAt:
+          type: string
+          format: date-time
+          description: When the meeting was created
+        updatedAt:
+          type: string
+          format: date-time
+          description: When the meeting was last updated
+      required:
+        - id
+        - title
+        - organizerId
+        - estimatedDuration
+        - proposedSlots
+        - createdAt
+        - updatedAt
+
+    RecommendedSlot:
+      type: object
+      properties:
+        timeSlot:
+          $ref: '#/components/schemas/TimeSlot'
+        availableCount:
+          type: integer
+          description: Number of participants available for this slot
+        totalParticipants:
+          type: integer
+          description: Total number of participants
+        unavailableParticipants:
+          type: array
+          items:
+            $ref: '#/components/schemas/User'
+          description: List of participants who are unavailable for this slot
+      required:
+        - timeSlot
+        - availableCount
+        - totalParticipants
+
+    CreateUserRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          description: User's name
+        email:
+          type: string
+          format: email
+          description: User's email address
+      required:
+        - name
+        - email
+
+    CreateUserResponse:
+      type: object
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+      required:
+        - user
+
+    GetUserResponse:
+      type: object
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+      required:
+        - user
+
+    ListUsersResponse:
+      type: object
+      properties:
+        users:
+          type: array
+          items:
+            $ref: '#/components/schemas/User'
+          description: List of users
+      required:
+        - users
+
+    CreateMeetingRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          description: Meeting title
+        organizerId:
+          type: string
+          description: ID of the meeting organizer
+        estimatedDuration:
+          type: integer
+          description: Estimated duration of the meeting in minutes
+        proposedSlots:
+          type: array
+          items:
+            $ref: '#/components/schemas/TimeSlot'
+          description: Proposed time slots for the meeting
+        participantIds:
+          type: array
+          items:
+            type: string
+          description: IDs of meeting participants
+      required:
+        - title
+        - organizerId
+        - estimatedDuration
+        - proposedSlots
+
+    CreateMeetingResponse:
+      type: object
+      properties:
+        meeting:
+          $ref: '#/components/schemas/Meeting'
+      required:
+        - meeting
+
+    AddAvailabilityRequest:
+      type: object
+      properties:
+        userId:
+          type: string
+          description: ID of the user providing availability
+        meetingId:
+          type: string
+          description: ID of the meeting
+        availableSlots:
+          type: array
+          items:
+            $ref: '#/components/schemas/TimeSlot'
+          description: Time slots when the user is available
+      required:
+        - userId
+        - meetingId
+        - availableSlots
+
+    GetRecommendationsResponse:
+      type: object
+      properties:
+        recommendedSlots:
+          type: array
+          items:
+            $ref: '#/components/schemas/RecommendedSlot'
+          description: Recommended time slots for the meeting
+      required:
+        - recommendedSlots
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Error message
+      required:
+        - error 
