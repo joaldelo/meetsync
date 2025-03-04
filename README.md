@@ -306,3 +306,61 @@ meetsync/
 ├── go.sum
 └── README.md
 ```
+
+## Infrastructure (Work in Progress)
+
+The `infra` directory contains sample configurations for deploying MeetSync to Kubernetes using either Helm or Terraform. These configurations are provided as starting points and should be tested and modified according to your specific requirements.
+
+### Helm Chart (`infra/helm/meetsync/`)
+
+The Helm chart provides a template for deploying MeetSync to any Kubernetes cluster. Key features include:
+
+- Configurable deployment parameters via `values.yaml`
+- Horizontal Pod Autoscaling
+- Resource management (CPU/Memory limits)
+- Ingress configuration
+- Environment variable management
+
+To deploy using Helm:
+
+```bash
+# Add any required dependencies
+helm dependency update ./infra/helm/meetsync
+
+# Install the chart
+helm install meetsync ./infra/helm/meetsync
+
+# Upgrade an existing installation
+helm upgrade meetsync ./infra/helm/meetsync
+```
+
+### Terraform Configuration (`infra/terraform/`)
+
+The Terraform configuration sets up the necessary AWS infrastructure for running MeetSync on EKS. Components include:
+
+- EKS cluster with managed node groups
+- VPC with public and private subnets
+- NAT Gateway for private subnet connectivity
+- Security group configurations
+- Required IAM roles and policies
+
+To deploy using Terraform:
+
+```bash
+cd infra/terraform
+
+# Initialize Terraform
+terraform init
+
+# Review the planned changes
+terraform plan
+
+# Apply the configuration
+terraform apply
+```
+
+### Important Notes
+
+- **Testing Required**: These configurations are provided as templates and require testing in your environment before production use.
+
+
