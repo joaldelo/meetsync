@@ -6,28 +6,26 @@ import (
 	"sort"
 	"time"
 
-	"github.com/google/uuid"
-
 	"meetsync/internal/api"
 	"meetsync/internal/models"
+	"meetsync/internal/repositories"
 	"meetsync/pkg/errors"
 	"meetsync/pkg/logs"
+
+	"github.com/google/uuid"
 )
 
 // MeetingHandler handles meeting-related requests
 type MeetingHandler struct {
-	// In a real application, you would inject services or repositories here
-	meetings       map[string]models.Meeting      // In-memory storage for demo purposes
-	availabilities map[string]models.Availability // In-memory storage for demo purposes
-	userHandler    *UserHandler                   // Reference to user handler for user lookups
+	repository  repositories.MeetingRepository
+	userHandler *UserHandler
 }
 
 // NewMeetingHandler creates a new MeetingHandler
 func NewMeetingHandler(userHandler *UserHandler) *MeetingHandler {
 	return &MeetingHandler{
-		meetings:       make(map[string]models.Meeting),
-		availabilities: make(map[string]models.Availability),
-		userHandler:    userHandler,
+		repository:  repositories.NewInMemoryMeetingRepository(),
+		userHandler: userHandler,
 	}
 }
 
@@ -54,48 +52,42 @@ func (h *MeetingHandler) CreateMeeting(w http.ResponseWriter, r *http.Request) e
 	}
 
 	// Validate organizer exists
-	organizer, exists := h.userHandler.users[req.OrganizerID]
-	if !exists {
+	organizer, err := h.userHandler.repository.GetByID(req.OrganizerID)
+	if err != nil {
 		return errors.NewNotFoundError("Organizer not found")
 	}
 
 	// Validate participants exist
 	var participants []models.User
 	for _, participantID := range req.ParticipantIDs {
-		participant, exists := h.userHandler.users[participantID]
-		if !exists {
+		participant, err := h.userHandler.repository.GetByID(participantID)
+		if err != nil {
 			return errors.NewNotFoundError("Participant not found: " + participantID)
 		}
 		participants = append(participants, participant)
 	}
 
-	// Assign IDs to time slots
-	for i := range req.ProposedSlots {
-		req.ProposedSlots[i].ID = uuid.New().String()
-	}
-
 	// Create meeting
-	now := time.Now()
 	meeting := models.Meeting{
-		ID:                uuid.New().String(),
 		Title:             req.Title,
 		OrganizerID:       req.OrganizerID,
 		Organizer:         &organizer,
 		EstimatedDuration: req.EstimatedDuration,
 		ProposedSlots:     req.ProposedSlots,
 		Participants:      participants,
-		CreatedAt:         now,
-		UpdatedAt:         now,
 	}
 
-	// Save meeting
-	h.meetings[meeting.ID] = meeting
+	// Save meeting using repository
+	createdMeeting, err := h.repository.CreateMeeting(meeting)
+	if err != nil {
+		return err
+	}
 
-	logs.Info("Created meeting: %s by organizer %s", meeting.ID, organizer.Name)
+	logs.Info("Created meeting: %s by organizer %s", createdMeeting.ID, organizer.Name)
 
 	// Return response
 	resp := api.CreateMeetingResponse{
-		Meeting: meeting,
+		Meeting: createdMeeting,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -129,15 +121,15 @@ func (h *MeetingHandler) AddAvailability(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Validate user exists
-	user, exists := h.userHandler.users[req.UserID]
-	if !exists {
-		return errors.NewNotFoundError("User not found")
+	user, err := h.userHandler.repository.GetByID(req.UserID)
+	if err != nil {
+		return err
 	}
 
 	// Validate meeting exists
-	meeting, exists := h.meetings[req.MeetingID]
-	if !exists {
-		return errors.NewNotFoundError("Meeting not found")
+	meeting, err := h.repository.GetMeetingByID(req.MeetingID)
+	if err != nil {
+		return err
 	}
 
 	// Match available slots with proposed slots and assign correct IDs
@@ -158,19 +150,18 @@ func (h *MeetingHandler) AddAvailability(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Create availability
-	now := time.Now()
 	availability := models.Availability{
-		ID:             uuid.New().String(),
 		ParticipantID:  req.UserID,
 		Participant:    &user,
 		MeetingID:      req.MeetingID,
 		AvailableSlots: matchedSlots,
-		CreatedAt:      now,
-		UpdatedAt:      now,
 	}
 
-	// Save availability
-	h.availabilities[availability.ID] = availability
+	// Save availability using repository
+	_, err = h.repository.CreateAvailability(availability)
+	if err != nil {
+		return err
+	}
 
 	logs.Info("Added availability for user %s in meeting %s", user.Name, meeting.Title)
 
@@ -189,22 +180,20 @@ func (h *MeetingHandler) GetRecommendations(w http.ResponseWriter, r *http.Reque
 		return errors.NewValidationError("Meeting ID is required", "")
 	}
 
-	// Validate meeting exists
-	meeting, exists := h.meetings[meetingID]
-	if !exists {
-		return errors.NewNotFoundError("Meeting not found")
+	// Get meeting using repository
+	meeting, err := h.repository.GetMeetingByID(meetingID)
+	if err != nil {
+		return err
 	}
 
-	// Get all availabilities for this meeting
-	var meetingAvailabilities []models.Availability
-	for _, availability := range h.availabilities {
-		if availability.MeetingID == meetingID {
-			meetingAvailabilities = append(meetingAvailabilities, availability)
-		}
+	// Get all availabilities for this meeting using repository
+	availabilities, err := h.repository.GetMeetingAvailabilities(meetingID)
+	if err != nil {
+		return err
 	}
 
 	// Calculate recommendations
-	recommendations := h.calculateRecommendations(meeting, meetingAvailabilities)
+	recommendations := h.calculateRecommendations(meeting, availabilities)
 
 	resp := api.GetRecommendationsResponse{
 		RecommendedSlots: recommendations,
@@ -229,10 +218,10 @@ func (h *MeetingHandler) UpdateMeeting(w http.ResponseWriter, r *http.Request) e
 		return errors.NewValidationError("Meeting ID is required", "")
 	}
 
-	// Check if meeting exists
-	meeting, exists := h.meetings[meetingID]
-	if !exists {
-		return errors.NewNotFoundError("Meeting not found")
+	// Get existing meeting
+	meeting, err := h.repository.GetMeetingByID(meetingID)
+	if err != nil {
+		return err
 	}
 
 	var req api.UpdateMeetingRequest
@@ -250,7 +239,9 @@ func (h *MeetingHandler) UpdateMeeting(w http.ResponseWriter, r *http.Request) e
 	if len(req.ProposedSlots) > 0 {
 		// Assign IDs to new time slots
 		for i := range req.ProposedSlots {
-			req.ProposedSlots[i].ID = uuid.New().String()
+			if req.ProposedSlots[i].ID == "" {
+				req.ProposedSlots[i].ID = uuid.New().String()
+			}
 		}
 		meeting.ProposedSlots = req.ProposedSlots
 	}
@@ -258,8 +249,8 @@ func (h *MeetingHandler) UpdateMeeting(w http.ResponseWriter, r *http.Request) e
 		// Validate and update participants
 		var participants []models.User
 		for _, participantID := range req.ParticipantIDs {
-			participant, exists := h.userHandler.users[participantID]
-			if !exists {
+			participant, err := h.userHandler.repository.GetByID(participantID)
+			if err != nil {
 				return errors.NewNotFoundError("Participant not found: " + participantID)
 			}
 			participants = append(participants, participant)
@@ -267,11 +258,14 @@ func (h *MeetingHandler) UpdateMeeting(w http.ResponseWriter, r *http.Request) e
 		meeting.Participants = participants
 	}
 
-	meeting.UpdatedAt = time.Now()
-	h.meetings[meetingID] = meeting
+	// Update meeting using repository
+	updatedMeeting, err := h.repository.UpdateMeeting(meeting)
+	if err != nil {
+		return err
+	}
 
 	resp := api.UpdateMeetingResponse{
-		Meeting: meeting,
+		Meeting: updatedMeeting,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -293,19 +287,10 @@ func (h *MeetingHandler) DeleteMeeting(w http.ResponseWriter, r *http.Request) e
 		return errors.NewValidationError("Meeting ID is required", "")
 	}
 
-	// Check if meeting exists
-	if _, exists := h.meetings[meetingID]; !exists {
-		return errors.NewNotFoundError("Meeting not found")
-	}
-
-	// Delete meeting and associated availabilities
-	delete(h.meetings, meetingID)
-
-	// Delete all availabilities for this meeting
-	for id, availability := range h.availabilities {
-		if availability.MeetingID == meetingID {
-			delete(h.availabilities, id)
-		}
+	// Delete meeting using repository
+	err := h.repository.DeleteMeeting(meetingID)
+	if err != nil {
+		return err
 	}
 
 	w.WriteHeader(http.StatusNoContent)
@@ -324,12 +309,6 @@ func (h *MeetingHandler) UpdateAvailability(w http.ResponseWriter, r *http.Reque
 		return errors.NewValidationError("Availability ID is required", "")
 	}
 
-	// Check if availability exists
-	availability, exists := h.availabilities[availabilityID]
-	if !exists {
-		return errors.NewNotFoundError("Availability not found")
-	}
-
 	var req api.UpdateAvailabilityRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		return errors.NewValidationError("Invalid request body", err.Error())
@@ -339,18 +318,33 @@ func (h *MeetingHandler) UpdateAvailability(w http.ResponseWriter, r *http.Reque
 		return errors.NewValidationError("At least one available time slot is required", "")
 	}
 
-	// Assign IDs to new time slots
-	for i := range req.AvailableSlots {
-		req.AvailableSlots[i].ID = uuid.New().String()
+	// Find the availability in all availabilities
+	availabilities := h.repository.GetAllAvailabilities()
+	var availability models.Availability
+	var found bool
+	for _, a := range availabilities {
+		if a.ID == availabilityID {
+			availability = a
+			found = true
+			break
+		}
+	}
+	if !found {
+		return errors.NewNotFoundError("Availability not found")
 	}
 
 	// Update availability
 	availability.AvailableSlots = req.AvailableSlots
 	availability.UpdatedAt = time.Now()
-	h.availabilities[availabilityID] = availability
+
+	// Update using repository
+	updatedAvailability, err := h.repository.UpdateAvailability(availability)
+	if err != nil {
+		return err
+	}
 
 	resp := api.UpdateAvailabilityResponse{
-		Availability: availability,
+		Availability: updatedAvailability,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -372,13 +366,11 @@ func (h *MeetingHandler) DeleteAvailability(w http.ResponseWriter, r *http.Reque
 		return errors.NewValidationError("Availability ID is required", "")
 	}
 
-	// Check if availability exists
-	if _, exists := h.availabilities[availabilityID]; !exists {
-		return errors.NewNotFoundError("Availability not found")
+	// Delete using repository
+	err := h.repository.DeleteAvailability(availabilityID)
+	if err != nil {
+		return err
 	}
-
-	// Delete availability
-	delete(h.availabilities, availabilityID)
 
 	w.WriteHeader(http.StatusNoContent)
 	return nil
@@ -401,23 +393,14 @@ func (h *MeetingHandler) GetAvailability(w http.ResponseWriter, r *http.Request)
 		return errors.NewValidationError("Meeting ID is required", "")
 	}
 
-	// Find availability for the user and meeting
-	var foundAvailability models.Availability
-	found := false
-	for _, availability := range h.availabilities {
-		if availability.ParticipantID == userID && availability.MeetingID == meetingID {
-			foundAvailability = availability
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		return errors.NewNotFoundError("Availability not found")
+	// Get availability using repository
+	availability, err := h.repository.GetAvailability(userID, meetingID)
+	if err != nil {
+		return err
 	}
 
 	resp := api.GetAvailabilityResponse{
-		Availability: foundAvailability,
+		Availability: availability,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -473,8 +456,7 @@ func (h *MeetingHandler) calculateRecommendations(meeting models.Meeting, availa
 		for _, availableSlot := range availability.AvailableSlots {
 			// Match with proposed slots
 			for _, proposedSlot := range meeting.ProposedSlots {
-				if availableSlot.StartTime.Equal(proposedSlot.StartTime) &&
-					availableSlot.EndTime.Equal(proposedSlot.EndTime) {
+				if availableSlot.ID == proposedSlot.ID {
 					slotAvailability[proposedSlot.ID]++
 					participantAvailability[availability.ParticipantID][proposedSlot.ID] = true
 				}

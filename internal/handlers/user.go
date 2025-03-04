@@ -4,26 +4,23 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
-	"time"
-
-	"github.com/google/uuid"
 
 	"meetsync/internal/api"
 	"meetsync/internal/models"
+	"meetsync/internal/repositories"
 	"meetsync/pkg/errors"
 	"meetsync/pkg/logs"
 )
 
 // UserHandler handles user-related requests
 type UserHandler struct {
-	// In a real application, you would inject a service or repository here
-	users map[string]models.User // In-memory storage for demo purposes
+	repository repositories.UserRepository
 }
 
 // NewUserHandler creates a new UserHandler
 func NewUserHandler() *UserHandler {
 	return &UserHandler{
-		users: make(map[string]models.User),
+		repository: repositories.NewInMemoryUserRepository(),
 	}
 }
 
@@ -46,31 +43,23 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) error {
 		return errors.NewValidationError("Email is required", "")
 	}
 
-	// Check if email is already in use
-	for _, user := range h.users {
-		if strings.EqualFold(user.Email, req.Email) {
-			return errors.NewConflictError("Email is already in use")
-		}
-	}
-
-	// Create user
-	now := time.Now()
+	// Create user model
 	user := models.User{
-		ID:        uuid.New().String(),
-		Name:      req.Name,
-		Email:     req.Email,
-		CreatedAt: now,
-		UpdatedAt: now,
+		Name:  req.Name,
+		Email: req.Email,
 	}
 
-	// In a real application, you would save the user to a database
-	h.users[user.ID] = user
+	// Create user using repository
+	createdUser, err := h.repository.Create(user)
+	if err != nil {
+		return err
+	}
 
-	logs.Info("Created user: %s (%s)", user.Name, user.ID)
+	logs.Info("Created user: %s (%s)", createdUser.Name, createdUser.ID)
 
 	// Return response
 	resp := api.CreateUserResponse{
-		User: user,
+		User: createdUser,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -94,10 +83,10 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) error {
 	}
 	userID := parts[3]
 
-	// Get user
-	user, exists := h.users[userID]
-	if !exists {
-		return errors.NewNotFoundError("User not found")
+	// Get user using repository
+	user, err := h.repository.GetByID(userID)
+	if err != nil {
+		return err
 	}
 
 	// Return response
@@ -118,10 +107,10 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) error {
 		return errors.NewValidationError("Method not allowed", "Only GET method is allowed")
 	}
 
-	// Get all users
-	users := make([]models.User, 0, len(h.users))
-	for _, user := range h.users {
-		users = append(users, user)
+	// Get all users using repository
+	users, err := h.repository.GetAll()
+	if err != nil {
+		return err
 	}
 
 	// Return response
