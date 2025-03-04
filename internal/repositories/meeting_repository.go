@@ -1,6 +1,7 @@
 package repositories
 
 import (
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,6 +28,7 @@ type MeetingRepository interface {
 type InMemoryMeetingRepository struct {
 	meetings       map[string]models.Meeting
 	availabilities map[string]models.Availability
+	mu             sync.RWMutex
 }
 
 // NewInMemoryMeetingRepository creates a new InMemoryMeetingRepository
@@ -38,6 +40,9 @@ func NewInMemoryMeetingRepository() *InMemoryMeetingRepository {
 }
 
 func (r *InMemoryMeetingRepository) CreateMeeting(meeting models.Meeting) (models.Meeting, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	// Set timestamps and ID
 	now := time.Now()
 	meeting.CreatedAt = now
@@ -58,6 +63,9 @@ func (r *InMemoryMeetingRepository) CreateMeeting(meeting models.Meeting) (model
 }
 
 func (r *InMemoryMeetingRepository) GetMeetingByID(id string) (models.Meeting, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	meeting, exists := r.meetings[id]
 	if !exists {
 		return models.Meeting{}, errors.NewNotFoundError("Meeting not found")
@@ -66,6 +74,9 @@ func (r *InMemoryMeetingRepository) GetMeetingByID(id string) (models.Meeting, e
 }
 
 func (r *InMemoryMeetingRepository) UpdateMeeting(meeting models.Meeting) (models.Meeting, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	if _, exists := r.meetings[meeting.ID]; !exists {
 		return models.Meeting{}, errors.NewNotFoundError("Meeting not found")
 	}
@@ -76,6 +87,9 @@ func (r *InMemoryMeetingRepository) UpdateMeeting(meeting models.Meeting) (model
 }
 
 func (r *InMemoryMeetingRepository) DeleteMeeting(id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	if _, exists := r.meetings[id]; !exists {
 		return errors.NewNotFoundError("Meeting not found")
 	}
@@ -93,6 +107,9 @@ func (r *InMemoryMeetingRepository) DeleteMeeting(id string) error {
 }
 
 func (r *InMemoryMeetingRepository) CreateAvailability(availability models.Availability) (models.Availability, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	// Set timestamps and ID
 	now := time.Now()
 	availability.CreatedAt = now
@@ -106,6 +123,9 @@ func (r *InMemoryMeetingRepository) CreateAvailability(availability models.Avail
 }
 
 func (r *InMemoryMeetingRepository) GetAvailability(userID, meetingID string) (models.Availability, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	for _, availability := range r.availabilities {
 		if availability.ParticipantID == userID && availability.MeetingID == meetingID {
 			return availability, nil
@@ -115,6 +135,9 @@ func (r *InMemoryMeetingRepository) GetAvailability(userID, meetingID string) (m
 }
 
 func (r *InMemoryMeetingRepository) UpdateAvailability(availability models.Availability) (models.Availability, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	if _, exists := r.availabilities[availability.ID]; !exists {
 		return models.Availability{}, errors.NewNotFoundError("Availability not found")
 	}
@@ -125,6 +148,9 @@ func (r *InMemoryMeetingRepository) UpdateAvailability(availability models.Avail
 }
 
 func (r *InMemoryMeetingRepository) DeleteAvailability(id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	if _, exists := r.availabilities[id]; !exists {
 		return errors.NewNotFoundError("Availability not found")
 	}
@@ -134,6 +160,9 @@ func (r *InMemoryMeetingRepository) DeleteAvailability(id string) error {
 }
 
 func (r *InMemoryMeetingRepository) GetMeetingAvailabilities(meetingID string) ([]models.Availability, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	var availabilities []models.Availability
 	for _, availability := range r.availabilities {
 		if availability.MeetingID == meetingID {
@@ -144,6 +173,9 @@ func (r *InMemoryMeetingRepository) GetMeetingAvailabilities(meetingID string) (
 }
 
 func (r *InMemoryMeetingRepository) GetAllAvailabilities() []models.Availability {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	availabilities := make([]models.Availability, 0, len(r.availabilities))
 	for _, a := range r.availabilities {
 		availabilities = append(availabilities, a)

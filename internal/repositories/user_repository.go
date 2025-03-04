@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,6 +22,7 @@ type UserRepository interface {
 // InMemoryUserRepository implements UserRepository using in-memory storage
 type InMemoryUserRepository struct {
 	users map[string]models.User
+	mu    sync.RWMutex
 }
 
 // NewInMemoryUserRepository creates a new InMemoryUserRepository
@@ -31,6 +33,9 @@ func NewInMemoryUserRepository() *InMemoryUserRepository {
 }
 
 func (r *InMemoryUserRepository) Create(user models.User) (models.User, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	// Check if email is already in use
 	for _, existingUser := range r.users {
 		if strings.EqualFold(existingUser.Email, user.Email) {
@@ -53,6 +58,9 @@ func (r *InMemoryUserRepository) Create(user models.User) (models.User, error) {
 }
 
 func (r *InMemoryUserRepository) GetByID(id string) (models.User, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	user, exists := r.users[id]
 	if !exists {
 		return models.User{}, errors.NewNotFoundError("User not found")
@@ -61,6 +69,9 @@ func (r *InMemoryUserRepository) GetByID(id string) (models.User, error) {
 }
 
 func (r *InMemoryUserRepository) GetAll() ([]models.User, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	users := make([]models.User, 0, len(r.users))
 	for _, user := range r.users {
 		users = append(users, user)
@@ -69,6 +80,9 @@ func (r *InMemoryUserRepository) GetAll() ([]models.User, error) {
 }
 
 func (r *InMemoryUserRepository) GetByEmail(email string) (models.User, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	for _, user := range r.users {
 		if strings.EqualFold(user.Email, email) {
 			return user, true
