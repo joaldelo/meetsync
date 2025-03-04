@@ -33,6 +33,9 @@ WORKDIR /app
 # Copy the binary from builder
 COPY --from=builder /app/meetsync .
 
+# Copy docs directory
+COPY --from=builder /app/docs ./docs
+
 # Use non-root user
 USER appuser
 

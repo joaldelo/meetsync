@@ -125,10 +125,10 @@ func TestCompleteSchedulingFlow(t *testing.T) {
 		t.Errorf("Expected 4 available participants for best slot, got %d", firstSlot.AvailableCount)
 	}
 
-	// Verify slots are ordered by availability (lowest to highest)
+	// Verify slots are ordered by availability (highest to lowest)
 	for i := 1; i < len(finalRecs.RecommendedSlots); i++ {
-		if finalRecs.RecommendedSlots[i-1].AvailableCount > finalRecs.RecommendedSlots[i].AvailableCount {
-			t.Errorf("Slots not properly ordered by availability count: slot[%d]=%d > slot[%d]=%d",
+		if finalRecs.RecommendedSlots[i-1].AvailableCount < finalRecs.RecommendedSlots[i].AvailableCount {
+			t.Errorf("Slots not properly ordered by availability count: slot[%d]=%d < slot[%d]=%d",
 				i-1, finalRecs.RecommendedSlots[i-1].AvailableCount,
 				i, finalRecs.RecommendedSlots[i].AvailableCount)
 		}
@@ -274,5 +274,138 @@ func TestConflictingMeetingsScenario(t *testing.T) {
 	}
 	if !hasNonOverlapping2 {
 		t.Error("Expected non-overlapping slot (2-3 PM) to be recommended for meeting 2")
+	}
+}
+
+func TestMeetingUpdateAndDeletionFlow(t *testing.T) {
+	ts := NewTestSetup(t)
+	defer ts.Cleanup()
+
+	// Create organizer and participants
+	organizer, err := ts.CreateUser("Meeting Organizer", "organizer")
+	if err != nil {
+		t.Fatalf("Failed to create organizer: %v", err)
+	}
+
+	participants := make([]*TestUser, 0, 3)
+	for i := 1; i <= 3; i++ {
+		user, err := ts.CreateUser(
+			fmt.Sprintf("Participant %d", i),
+			fmt.Sprintf("participant%d", i),
+		)
+		if err != nil {
+			t.Fatalf("Failed to create participant %d: %v", i, err)
+		}
+		participants = append(participants, user)
+	}
+
+	participantIDs := make([]string, len(participants))
+	for i, p := range participants {
+		participantIDs[i] = p.ID
+	}
+
+	// Create initial meeting
+	now := time.Now()
+	tomorrow := now.Add(24 * time.Hour)
+	initialSlots := []models.TimeSlot{
+		{
+			StartTime: tomorrow.Add(9 * time.Hour),  // 9 AM tomorrow
+			EndTime:   tomorrow.Add(10 * time.Hour), // 10 AM tomorrow
+		},
+		{
+			StartTime: tomorrow.Add(14 * time.Hour), // 2 PM tomorrow
+			EndTime:   tomorrow.Add(15 * time.Hour), // 3 PM tomorrow
+		},
+	}
+
+	meetingID, err := ts.CreateMeeting(
+		"Initial Meeting",
+		organizer.ID,
+		participantIDs[:2], // Only include first two participants initially
+		initialSlots,
+	)
+	if err != nil {
+		t.Fatalf("Failed to create meeting: %v", err)
+	}
+
+	// Add availability for initial participants
+	for _, participant := range participants[:2] {
+		if err := ts.AddAvailability(participant.ID, meetingID, initialSlots); err != nil {
+			t.Fatalf("Failed to add availability for participant %s: %v", participant.Name, err)
+		}
+	}
+
+	// Get initial recommendations
+	initialRecs, err := ts.GetRecommendations(meetingID)
+	if err != nil {
+		t.Fatalf("Failed to get initial recommendations: %v", err)
+	}
+
+	if len(initialRecs.RecommendedSlots) == 0 {
+		t.Fatal("Expected initial recommendations, got none")
+	}
+
+	// Update meeting with new time slots and add a new participant
+	dayAfter := now.Add(48 * time.Hour)
+	updatedSlots := []models.TimeSlot{
+		initialSlots[0], // Keep the morning slot
+		{
+			StartTime: dayAfter.Add(11 * time.Hour), // 11 AM day after tomorrow
+			EndTime:   dayAfter.Add(12 * time.Hour), // 12 PM day after tomorrow
+		},
+	}
+
+	if err := ts.UpdateMeeting(meetingID, "Updated Meeting", 90, append(participantIDs[:2], participants[2].ID), updatedSlots); err != nil {
+		t.Fatalf("Failed to update meeting: %v", err)
+	}
+
+	// Add availability for the new participant
+	if err := ts.AddAvailability(participants[2].ID, meetingID, updatedSlots); err != nil {
+		t.Fatalf("Failed to add availability for new participant: %v", err)
+	}
+
+	// Update availability for existing participants
+	for _, participant := range participants[:2] {
+		if err := ts.UpdateAvailability(participant.ID, meetingID, updatedSlots); err != nil {
+			t.Fatalf("Failed to update availability for participant %s: %v", participant.Name, err)
+		}
+	}
+
+	// Get updated recommendations
+	updatedRecs, err := ts.GetRecommendations(meetingID)
+	if err != nil {
+		t.Fatalf("Failed to get updated recommendations: %v", err)
+	}
+
+	if len(updatedRecs.RecommendedSlots) != 2 {
+		t.Errorf("Expected 2 recommended slots after update, got %d", len(updatedRecs.RecommendedSlots))
+	}
+
+	// Delete availability for one participant
+	if err := ts.DeleteAvailability(participants[0].ID, meetingID); err != nil {
+		t.Fatalf("Failed to delete availability: %v", err)
+	}
+
+	// Get recommendations after deleting availability
+	recsAfterDelete, err := ts.GetRecommendations(meetingID)
+	if err != nil {
+		t.Fatalf("Failed to get recommendations after deletion: %v", err)
+	}
+
+	// Verify that recommendations reflect the deleted availability
+	for _, rec := range recsAfterDelete.RecommendedSlots {
+		if rec.AvailableCount >= len(participants) {
+			t.Errorf("Expected available count to be less than total participants after deletion")
+		}
+	}
+
+	// Finally, delete the meeting
+	if err := ts.DeleteMeeting(meetingID); err != nil {
+		t.Fatalf("Failed to delete meeting: %v", err)
+	}
+
+	// Verify that getting recommendations for deleted meeting fails
+	if _, err := ts.GetRecommendations(meetingID); err == nil {
+		t.Error("Expected error when getting recommendations for deleted meeting")
 	}
 }

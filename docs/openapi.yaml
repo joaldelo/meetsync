@@ -148,6 +148,38 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+    get:
+      tags:
+        - Availability
+      summary: Get availability
+      description: Gets a participant's availability for a meeting
+      operationId: getAvailability
+      parameters:
+        - name: userId
+          in: query
+          required: true
+          schema:
+            type: string
+          description: User ID
+        - name: meetingId
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Meeting ID
+      responses:
+        '200':
+          description: Availability found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetAvailabilityResponse'
+        '404':
+          description: Availability not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/recommendations:
     get:
@@ -178,6 +210,130 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '404':
           description: Meeting not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/meetings/{id}:
+    put:
+      tags:
+        - Meetings
+      summary: Update a meeting
+      description: Updates an existing meeting's details
+      operationId: updateMeeting
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Meeting ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateMeetingRequest'
+      responses:
+        '200':
+          description: Meeting updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateMeetingResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Meeting not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags:
+        - Meetings
+      summary: Delete a meeting
+      description: Deletes an existing meeting
+      operationId: deleteMeeting
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Meeting ID
+      responses:
+        '204':
+          description: Meeting deleted successfully
+        '404':
+          description: Meeting not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/availabilities/{id}:
+    put:
+      tags:
+        - Availability
+      summary: Update availability
+      description: Updates a participant's availability for a meeting
+      operationId: updateAvailability
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Availability ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAvailabilityRequest'
+      responses:
+        '200':
+          description: Availability updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateAvailabilityResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Availability not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags:
+        - Availability
+      summary: Delete availability
+      description: Deletes a participant's availability for a meeting
+      operationId: deleteAvailability
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Availability ID
+      responses:
+        '204':
+          description: Availability deleted successfully
+        '404':
+          description: Availability not found
           content:
             application/json:
               schema:
@@ -411,4 +567,59 @@ components:
           type: string
           description: Error message
       required:
-        - error 
+        - error
+
+    UpdateMeetingRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          description: Meeting title
+        estimatedDuration:
+          type: integer
+          description: Estimated duration of the meeting in minutes
+        proposedSlots:
+          type: array
+          items:
+            $ref: '#/components/schemas/TimeSlot'
+          description: Proposed time slots for the meeting
+        participantIds:
+          type: array
+          items:
+            type: string
+          description: IDs of meeting participants
+
+    UpdateMeetingResponse:
+      type: object
+      properties:
+        meeting:
+          $ref: '#/components/schemas/Meeting'
+      required:
+        - meeting
+
+    UpdateAvailabilityRequest:
+      type: object
+      properties:
+        availableSlots:
+          type: array
+          items:
+            $ref: '#/components/schemas/TimeSlot'
+          description: Updated time slots when the user is available
+      required:
+        - availableSlots
+
+    UpdateAvailabilityResponse:
+      type: object
+      properties:
+        availability:
+          $ref: '#/components/schemas/Availability'
+      required:
+        - availability
+
+    GetAvailabilityResponse:
+      type: object
+      properties:
+        availability:
+          $ref: '#/components/schemas/Availability'
+      required:
+        - availability 

@@ -163,6 +163,82 @@ func (ts *TestSetup) GetRecommendations(meetingID string) (*api.GetRecommendatio
 	return &resp, nil
 }
 
+// UpdateMeeting updates an existing meeting
+func (ts *TestSetup) UpdateMeeting(meetingID, title string, duration int, participantIDs []string, slots []models.TimeSlot) error {
+	req := api.UpdateMeetingRequest{
+		Title:             title,
+		EstimatedDuration: duration,
+		ProposedSlots:     slots,
+		ParticipantIDs:    participantIDs,
+	}
+
+	_, err := ts.makeRequest(http.MethodPut, fmt.Sprintf("/api/meetings/%s", meetingID), req)
+	return err
+}
+
+// DeleteMeeting deletes an existing meeting
+func (ts *TestSetup) DeleteMeeting(meetingID string) error {
+	_, err := ts.makeRequest(http.MethodDelete, fmt.Sprintf("/api/meetings/%s", meetingID), nil)
+	if err != nil {
+		return err
+	}
+
+	// Remove from tracking slice
+	for i, id := range ts.createdMeetings {
+		if id == meetingID {
+			ts.createdMeetings = append(ts.createdMeetings[:i], ts.createdMeetings[i+1:]...)
+			break
+		}
+	}
+
+	return nil
+}
+
+// GetAvailability gets a user's availability for a meeting
+func (ts *TestSetup) GetAvailability(userID, meetingID string) (string, error) {
+	respBody, err := ts.makeRequest(http.MethodGet, fmt.Sprintf("/api/availabilities?userId=%s&meetingId=%s", userID, meetingID), nil)
+	if err != nil {
+		return "", err
+	}
+
+	var resp struct {
+		Availability struct {
+			ID string `json:"id"`
+		} `json:"availability"`
+	}
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return "", fmt.Errorf("failed to unmarshal response: %v", err)
+	}
+
+	return resp.Availability.ID, nil
+}
+
+// UpdateAvailability updates a participant's availability
+func (ts *TestSetup) UpdateAvailability(userID, meetingID string, slots []models.TimeSlot) error {
+	availabilityID, err := ts.GetAvailability(userID, meetingID)
+	if err != nil {
+		return fmt.Errorf("failed to get availability ID: %v", err)
+	}
+
+	req := api.UpdateAvailabilityRequest{
+		AvailableSlots: slots,
+	}
+
+	_, err = ts.makeRequest(http.MethodPut, fmt.Sprintf("/api/availabilities/%s", availabilityID), req)
+	return err
+}
+
+// DeleteAvailability deletes a participant's availability
+func (ts *TestSetup) DeleteAvailability(userID, meetingID string) error {
+	availabilityID, err := ts.GetAvailability(userID, meetingID)
+	if err != nil {
+		return fmt.Errorf("failed to get availability ID: %v", err)
+	}
+
+	_, err = ts.makeRequest(http.MethodDelete, fmt.Sprintf("/api/availabilities/%s", availabilityID), nil)
+	return err
+}
+
 // Cleanup removes all resources created during the test
 func (ts *TestSetup) Cleanup() {
 	// Since we don't have DELETE endpoints implemented yet, just log the resources that would be cleaned up

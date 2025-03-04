@@ -67,3 +67,31 @@ type UpdateUserRequest struct {
 	Name  string `json:"name,omitempty"`
 	Email string `json:"email,omitempty"`
 }
+
+// UpdateMeetingRequest represents the request to update a meeting
+type UpdateMeetingRequest struct {
+	Title             string            `json:"title,omitempty"`
+	EstimatedDuration int               `json:"estimatedDuration,omitempty"`
+	ProposedSlots     []models.TimeSlot `json:"proposedSlots,omitempty"`
+	ParticipantIDs    []string          `json:"participantIds,omitempty"`
+}
+
+// UpdateMeetingResponse represents the response after updating a meeting
+type UpdateMeetingResponse struct {
+	Meeting models.Meeting `json:"meeting"`
+}
+
+// UpdateAvailabilityRequest represents the request to update availability
+type UpdateAvailabilityRequest struct {
+	AvailableSlots []models.TimeSlot `json:"availableSlots"`
+}
+
+// UpdateAvailabilityResponse represents the response after updating availability
+type UpdateAvailabilityResponse struct {
+	Availability models.Availability `json:"availability"`
+}
+
+// GetAvailabilityResponse represents the response when getting availability
+type GetAvailabilityResponse struct {
+	Availability models.Availability `json:"availability"`
+}

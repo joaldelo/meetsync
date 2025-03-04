@@ -515,3 +515,449 @@ func TestGetRecommendations(t *testing.T) {
 		})
 	}
 }
+
+func TestUpdateMeeting(t *testing.T) {
+	// Create handlers
+	userHandler := NewUserHandler()
+	meetingHandler := NewMeetingHandler(userHandler)
+
+	// Create a test user (organizer)
+	organizer := models.User{
+		ID:    "organizer-id",
+		Name:  "Organizer",
+		Email: "organizer@example.com",
+	}
+	userHandler.users[organizer.ID] = organizer
+
+	// Create test participants
+	participant1 := models.User{
+		ID:    "participant1-id",
+		Name:  "Participant 1",
+		Email: "participant1@example.com",
+	}
+	userHandler.users[participant1.ID] = participant1
+
+	participant2 := models.User{
+		ID:    "participant2-id",
+		Name:  "Participant 2",
+		Email: "participant2@example.com",
+	}
+	userHandler.users[participant2.ID] = participant2
+
+	// Create a test meeting
+	now := time.Now()
+	tomorrow := now.Add(24 * time.Hour)
+	meeting := models.Meeting{
+		ID:                "meeting-id",
+		Title:             "Original Meeting",
+		OrganizerID:       organizer.ID,
+		Organizer:         &organizer,
+		EstimatedDuration: 60,
+		ProposedSlots: []models.TimeSlot{
+			{
+				ID:        "slot1",
+				StartTime: tomorrow,
+				EndTime:   tomorrow.Add(time.Hour),
+			},
+		},
+		Participants: []models.User{participant1},
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	meetingHandler.meetings[meeting.ID] = meeting
+
+	tests := []struct {
+		name           string
+		meetingID      string
+		requestBody    api.UpdateMeetingRequest
+		expectedStatus int
+		validateFunc   func(*testing.T, *httptest.ResponseRecorder)
+	}{
+		{
+			name:      "Valid update",
+			meetingID: meeting.ID,
+			requestBody: api.UpdateMeetingRequest{
+				Title:             "Updated Meeting",
+				EstimatedDuration: 90,
+				ParticipantIDs:    []string{participant1.ID, participant2.ID},
+			},
+			expectedStatus: http.StatusOK,
+			validateFunc: func(t *testing.T, w *httptest.ResponseRecorder) {
+				var resp api.UpdateMeetingResponse
+				err := json.Unmarshal(w.Body.Bytes(), &resp)
+				if err != nil {
+					t.Fatalf("Failed to unmarshal response: %v", err)
+				}
+				if resp.Meeting.Title != "Updated Meeting" {
+					t.Errorf("Expected title 'Updated Meeting', got '%s'", resp.Meeting.Title)
+				}
+				if resp.Meeting.EstimatedDuration != 90 {
+					t.Errorf("Expected duration 90, got %d", resp.Meeting.EstimatedDuration)
+				}
+				if len(resp.Meeting.Participants) != 2 {
+					t.Errorf("Expected 2 participants, got %d", len(resp.Meeting.Participants))
+				}
+			},
+		},
+		{
+			name:      "Meeting not found",
+			meetingID: "non-existent-id",
+			requestBody: api.UpdateMeetingRequest{
+				Title: "Updated Meeting",
+			},
+			expectedStatus: http.StatusNotFound,
+			validateFunc: func(t *testing.T, w *httptest.ResponseRecorder) {
+				if w.Body.String() != "Meeting not found\n" {
+					t.Errorf("Expected error message 'Meeting not found', got '%s'", w.Body.String())
+				}
+			},
+		},
+		{
+			name:      "Invalid participant",
+			meetingID: meeting.ID,
+			requestBody: api.UpdateMeetingRequest{
+				ParticipantIDs: []string{"non-existent-id"},
+			},
+			expectedStatus: http.StatusBadRequest,
+			validateFunc: func(t *testing.T, w *httptest.ResponseRecorder) {
+				if w.Body.String() != "Participant not found: non-existent-id\n" {
+					t.Errorf("Expected error message 'Participant not found: non-existent-id', got '%s'", w.Body.String())
+				}
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			reqBody, err := json.Marshal(tc.requestBody)
+			if err != nil {
+				t.Fatalf("Failed to marshal request body: %v", err)
+			}
+
+			req, err := http.NewRequest(http.MethodPut, "/api/meetings/"+tc.meetingID, bytes.NewBuffer(reqBody))
+			if err != nil {
+				t.Fatalf("Failed to create request: %v", err)
+			}
+			req.Header.Set("Content-Type", "application/json")
+
+			w := httptest.NewRecorder()
+			meetingHandler.UpdateMeeting(w, req)
+
+			if w.Code != tc.expectedStatus {
+				t.Errorf("Expected status code %d, got %d", tc.expectedStatus, w.Code)
+			}
+
+			tc.validateFunc(t, w)
+		})
+	}
+}
+
+func TestDeleteMeeting(t *testing.T) {
+	tests := []struct {
+		name           string
+		meetingID      string
+		expectedStatus int
+		validateFunc   func(*testing.T, *MeetingHandler)
+	}{
+		{
+			name:           "Valid deletion",
+			meetingID:      "meeting-id",
+			expectedStatus: http.StatusNoContent,
+			validateFunc: func(t *testing.T, h *MeetingHandler) {
+				// Verify meeting is deleted
+				if _, exists := h.meetings["meeting-id"]; exists {
+					t.Error("Meeting should be deleted")
+				}
+				// Verify associated availability is deleted
+				if _, exists := h.availabilities["availability-id"]; exists {
+					t.Error("Associated availability should be deleted")
+				}
+			},
+		},
+		{
+			name:           "Meeting not found",
+			meetingID:      "non-existent-id",
+			expectedStatus: http.StatusNotFound,
+			validateFunc: func(t *testing.T, h *MeetingHandler) {
+				// No changes should be made
+				if _, exists := h.meetings["meeting-id"]; !exists {
+					t.Error("Existing meeting should not be affected")
+				}
+				if _, exists := h.availabilities["availability-id"]; !exists {
+					t.Error("Existing availability should not be affected")
+				}
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create fresh handlers for each test case
+			userHandler := NewUserHandler()
+			meetingHandler := NewMeetingHandler(userHandler)
+
+			// Create a test user
+			user := models.User{
+				ID:    "user-id",
+				Name:  "Test User",
+				Email: "user@example.com",
+			}
+			userHandler.users[user.ID] = user
+
+			// Create a test meeting
+			now := time.Now()
+			meeting := models.Meeting{
+				ID:                "meeting-id",
+				Title:             "Test Meeting",
+				OrganizerID:       user.ID,
+				Organizer:         &user,
+				EstimatedDuration: 60,
+				CreatedAt:         now,
+				UpdatedAt:         now,
+			}
+			meetingHandler.meetings[meeting.ID] = meeting
+
+			// Create test availability
+			availability := models.Availability{
+				ID:            "availability-id",
+				ParticipantID: user.ID,
+				Participant:   &user,
+				MeetingID:     meeting.ID,
+				CreatedAt:     now,
+				UpdatedAt:     now,
+			}
+			meetingHandler.availabilities[availability.ID] = availability
+
+			req, err := http.NewRequest(http.MethodDelete, "/api/meetings/"+tc.meetingID, nil)
+			if err != nil {
+				t.Fatalf("Failed to create request: %v", err)
+			}
+
+			w := httptest.NewRecorder()
+			meetingHandler.DeleteMeeting(w, req)
+
+			if w.Code != tc.expectedStatus {
+				t.Errorf("Expected status code %d, got %d", tc.expectedStatus, w.Code)
+			}
+
+			tc.validateFunc(t, meetingHandler)
+		})
+	}
+}
+
+func TestUpdateAvailability(t *testing.T) {
+	// Create handlers
+	userHandler := NewUserHandler()
+	meetingHandler := NewMeetingHandler(userHandler)
+
+	// Create a test user
+	user := models.User{
+		ID:    "user-id",
+		Name:  "Test User",
+		Email: "user@example.com",
+	}
+	userHandler.users[user.ID] = user
+
+	// Create a test meeting
+	now := time.Now()
+	tomorrow := now.Add(24 * time.Hour)
+	meeting := models.Meeting{
+		ID:                "meeting-id",
+		Title:             "Test Meeting",
+		OrganizerID:       user.ID,
+		Organizer:         &user,
+		EstimatedDuration: 60,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	}
+	meetingHandler.meetings[meeting.ID] = meeting
+
+	// Create test availability
+	availability := models.Availability{
+		ID:            "availability-id",
+		ParticipantID: user.ID,
+		Participant:   &user,
+		MeetingID:     meeting.ID,
+		AvailableSlots: []models.TimeSlot{
+			{
+				ID:        "slot1",
+				StartTime: tomorrow,
+				EndTime:   tomorrow.Add(time.Hour),
+			},
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	meetingHandler.availabilities[availability.ID] = availability
+
+	tests := []struct {
+		name           string
+		availabilityID string
+		requestBody    api.UpdateAvailabilityRequest
+		expectedStatus int
+		validateFunc   func(*testing.T, *httptest.ResponseRecorder)
+	}{
+		{
+			name:           "Valid update",
+			availabilityID: availability.ID,
+			requestBody: api.UpdateAvailabilityRequest{
+				AvailableSlots: []models.TimeSlot{
+					{
+						StartTime: tomorrow.Add(2 * time.Hour),
+						EndTime:   tomorrow.Add(3 * time.Hour),
+					},
+				},
+			},
+			expectedStatus: http.StatusOK,
+			validateFunc: func(t *testing.T, w *httptest.ResponseRecorder) {
+				var resp api.UpdateAvailabilityResponse
+				err := json.Unmarshal(w.Body.Bytes(), &resp)
+				if err != nil {
+					t.Fatalf("Failed to unmarshal response: %v", err)
+				}
+				if len(resp.Availability.AvailableSlots) != 1 {
+					t.Errorf("Expected 1 available slot, got %d", len(resp.Availability.AvailableSlots))
+				}
+			},
+		},
+		{
+			name:           "Availability not found",
+			availabilityID: "non-existent-id",
+			requestBody: api.UpdateAvailabilityRequest{
+				AvailableSlots: []models.TimeSlot{
+					{
+						StartTime: tomorrow,
+						EndTime:   tomorrow.Add(time.Hour),
+					},
+				},
+			},
+			expectedStatus: http.StatusNotFound,
+			validateFunc: func(t *testing.T, w *httptest.ResponseRecorder) {
+				if w.Body.String() != "Availability not found\n" {
+					t.Errorf("Expected error message 'Availability not found', got '%s'", w.Body.String())
+				}
+			},
+		},
+		{
+			name:           "No available slots",
+			availabilityID: availability.ID,
+			requestBody: api.UpdateAvailabilityRequest{
+				AvailableSlots: []models.TimeSlot{},
+			},
+			expectedStatus: http.StatusBadRequest,
+			validateFunc: func(t *testing.T, w *httptest.ResponseRecorder) {
+				if w.Body.String() != "At least one available time slot is required\n" {
+					t.Errorf("Expected error message 'At least one available time slot is required', got '%s'", w.Body.String())
+				}
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			reqBody, err := json.Marshal(tc.requestBody)
+			if err != nil {
+				t.Fatalf("Failed to marshal request body: %v", err)
+			}
+
+			req, err := http.NewRequest(http.MethodPut, "/api/availabilities/"+tc.availabilityID, bytes.NewBuffer(reqBody))
+			if err != nil {
+				t.Fatalf("Failed to create request: %v", err)
+			}
+			req.Header.Set("Content-Type", "application/json")
+
+			w := httptest.NewRecorder()
+			meetingHandler.UpdateAvailability(w, req)
+
+			if w.Code != tc.expectedStatus {
+				t.Errorf("Expected status code %d, got %d", tc.expectedStatus, w.Code)
+			}
+
+			tc.validateFunc(t, w)
+		})
+	}
+}
+
+func TestDeleteAvailability(t *testing.T) {
+	tests := []struct {
+		name           string
+		availabilityID string
+		expectedStatus int
+		validateFunc   func(*testing.T, *MeetingHandler)
+	}{
+		{
+			name:           "Valid deletion",
+			availabilityID: "availability-id",
+			expectedStatus: http.StatusNoContent,
+			validateFunc: func(t *testing.T, h *MeetingHandler) {
+				if _, exists := h.availabilities["availability-id"]; exists {
+					t.Error("Availability should be deleted")
+				}
+			},
+		},
+		{
+			name:           "Availability not found",
+			availabilityID: "non-existent-id",
+			expectedStatus: http.StatusNotFound,
+			validateFunc: func(t *testing.T, h *MeetingHandler) {
+				if _, exists := h.availabilities["availability-id"]; !exists {
+					t.Error("Existing availability should not be affected")
+				}
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create fresh handlers for each test case
+			userHandler := NewUserHandler()
+			meetingHandler := NewMeetingHandler(userHandler)
+
+			// Create a test user
+			user := models.User{
+				ID:    "user-id",
+				Name:  "Test User",
+				Email: "user@example.com",
+			}
+			userHandler.users[user.ID] = user
+
+			// Create a test meeting
+			now := time.Now()
+			meeting := models.Meeting{
+				ID:                "meeting-id",
+				Title:             "Test Meeting",
+				OrganizerID:       user.ID,
+				Organizer:         &user,
+				EstimatedDuration: 60,
+				CreatedAt:         now,
+				UpdatedAt:         now,
+			}
+			meetingHandler.meetings[meeting.ID] = meeting
+
+			// Create test availability
+			availability := models.Availability{
+				ID:            "availability-id",
+				ParticipantID: user.ID,
+				Participant:   &user,
+				MeetingID:     meeting.ID,
+				CreatedAt:     now,
+				UpdatedAt:     now,
+			}
+			meetingHandler.availabilities[availability.ID] = availability
+
+			req, err := http.NewRequest(http.MethodDelete, "/api/availabilities/"+tc.availabilityID, nil)
+			if err != nil {
+				t.Fatalf("Failed to create request: %v", err)
+			}
+
+			w := httptest.NewRecorder()
+			meetingHandler.DeleteAvailability(w, req)
+
+			if w.Code != tc.expectedStatus {
+				t.Errorf("Expected status code %d, got %d", tc.expectedStatus, w.Code)
+			}
+
+			tc.validateFunc(t, meetingHandler)
+		})
+	}
+}

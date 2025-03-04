@@ -32,7 +32,16 @@ func (r *Router) Setup() {
 
 	// Register meeting routes
 	r.mux.HandleFunc("POST /api/meetings", meetingHandler.CreateMeeting)
+	r.mux.HandleFunc("PUT /api/meetings/{id}", meetingHandler.UpdateMeeting)
+	r.mux.HandleFunc("DELETE /api/meetings/{id}", meetingHandler.DeleteMeeting)
+
+	// Register availability routes
 	r.mux.HandleFunc("POST /api/availabilities", meetingHandler.AddAvailability)
+	r.mux.HandleFunc("GET /api/availabilities", meetingHandler.GetAvailability)
+	r.mux.HandleFunc("PUT /api/availabilities/{id}", meetingHandler.UpdateAvailability)
+	r.mux.HandleFunc("DELETE /api/availabilities/{id}", meetingHandler.DeleteAvailability)
+
+	// Register recommendations route
 	r.mux.HandleFunc("GET /api/recommendations", meetingHandler.GetRecommendations)
 
 	// Serve OpenAPI documentation
