@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"meetsync/internal/api"
 	"meetsync/internal/models"
@@ -15,6 +16,58 @@ func TestRouterSetup(t *testing.T) {
 	// Create a new router
 	r := New()
 	r.Setup()
+
+	// Create some test data
+	now := time.Now()
+
+	// First create a user and get their ID
+	createUserReq := api.CreateUserRequest{
+		Name:  "Test User",
+		Email: "test@example.com",
+	}
+	createUserBody := mustMarshal(createUserReq)
+	req, _ := http.NewRequest(http.MethodPost, "/api/users", bytes.NewBuffer(createUserBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("Failed to create test user: status %d", w.Code)
+	}
+
+	var createUserResp api.CreateUserResponse
+	if err := json.NewDecoder(w.Body).Decode(&createUserResp); err != nil {
+		t.Fatalf("Failed to decode create user response: %v", err)
+	}
+	validUserID := createUserResp.User.ID
+
+	// Create a meeting with the user as organizer
+	createMeetingReq := api.CreateMeetingRequest{
+		Title:             "Test Meeting",
+		OrganizerID:       validUserID,
+		EstimatedDuration: 60,
+		ProposedSlots: []models.TimeSlot{
+			{
+				StartTime: now,
+				EndTime:   now.Add(time.Hour),
+			},
+		},
+	}
+	createMeetingBody := mustMarshal(createMeetingReq)
+	req, _ = http.NewRequest(http.MethodPost, "/api/meetings", bytes.NewBuffer(createMeetingBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("Failed to create test meeting: status %d", w.Code)
+	}
+
+	var createMeetingResp api.CreateMeetingResponse
+	if err := json.NewDecoder(w.Body).Decode(&createMeetingResp); err != nil {
+		t.Fatalf("Failed to decode create meeting response: %v", err)
+	}
+	validMeetingID := createMeetingResp.Meeting.ID
 
 	// Test cases
 	tests := []struct {
@@ -36,8 +89,8 @@ func TestRouterSetup(t *testing.T) {
 			method: http.MethodPost,
 			path:   "/api/users",
 			body: mustMarshal(api.CreateUserRequest{
-				Name:  "Test User",
-				Email: "test@example.com",
+				Name:  "Another User",
+				Email: "another@example.com",
 			}),
 			expectedStatus: http.StatusCreated,
 		},
@@ -61,15 +114,36 @@ func TestRouterSetup(t *testing.T) {
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
-			name:   "POST /api/availabilities - Add availability (invalid)",
+			name:   "POST /api/availabilities - Add availability (validation error)",
 			method: http.MethodPost,
 			path:   "/api/availabilities",
 			body: mustMarshal(api.AddAvailabilityRequest{
-				UserID:         "non-existent-id",
-				MeetingID:      "non-existent-id",
-				AvailableSlots: []models.TimeSlot{},
+				UserID:    validUserID,
+				MeetingID: validMeetingID,
+				AvailableSlots: []models.TimeSlot{
+					{
+						StartTime: now.Add(time.Hour), // End time before start time
+						EndTime:   now,
+					},
+				},
 			}),
 			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:   "POST /api/availabilities - Add availability (not found)",
+			method: http.MethodPost,
+			path:   "/api/availabilities",
+			body: mustMarshal(api.AddAvailabilityRequest{
+				UserID:    "non-existent-id",
+				MeetingID: "non-existent-id",
+				AvailableSlots: []models.TimeSlot{
+					{
+						StartTime: now,
+						EndTime:   now.Add(time.Hour),
+					},
+				},
+			}),
+			expectedStatus: http.StatusNotFound,
 		},
 		{
 			name:           "GET /api/recommendations - Get recommendations (invalid)",

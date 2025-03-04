@@ -6,21 +6,21 @@ import (
 	"strings"
 
 	"meetsync/internal/api"
-	"meetsync/internal/models"
-	"meetsync/internal/repositories"
+	"meetsync/internal/interfaces"
+	"meetsync/internal/services"
 	"meetsync/pkg/errors"
 	"meetsync/pkg/logs"
 )
 
 // UserHandler handles user-related requests
 type UserHandler struct {
-	repository repositories.UserRepository
+	service interfaces.UserService
 }
 
 // NewUserHandler creates a new UserHandler
 func NewUserHandler() *UserHandler {
 	return &UserHandler{
-		repository: repositories.NewInMemoryUserRepository(),
+		service: services.NewUserService(),
 	}
 }
 
@@ -35,22 +35,8 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) error {
 		return errors.NewValidationError("Invalid request body", err.Error())
 	}
 
-	// Validate request
-	if req.Name == "" {
-		return errors.NewValidationError("Name is required", "")
-	}
-	if req.Email == "" {
-		return errors.NewValidationError("Email is required", "")
-	}
-
-	// Create user model
-	user := models.User{
-		Name:  req.Name,
-		Email: req.Email,
-	}
-
-	// Create user using repository
-	createdUser, err := h.repository.Create(user)
+	// Create user using service
+	createdUser, err := h.service.CreateUser(req.Name, req.Email)
 	if err != nil {
 		return err
 	}
@@ -83,8 +69,8 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) error {
 	}
 	userID := parts[3]
 
-	// Get user using repository
-	user, err := h.repository.GetByID(userID)
+	// Get user using service
+	user, err := h.service.GetUserByID(userID)
 	if err != nil {
 		return err
 	}
@@ -107,8 +93,8 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) error {
 		return errors.NewValidationError("Method not allowed", "Only GET method is allowed")
 	}
 
-	// Get all users using repository
-	users, err := h.repository.GetAll()
+	// Get all users using service
+	users, err := h.service.ListUsers()
 	if err != nil {
 		return err
 	}
