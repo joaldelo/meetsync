@@ -5,16 +5,21 @@ MeetSync is a REST API for scheduling meetings based on participant availability
 ## Features
 
 - User management (create, list, get users)
-- Create meetings with multiple proposed time slots
-- Add participant availability
-- Get recommendations for optimal meeting times
-- OpenAPI documentation
-- Comprehensive test suite
+- Create, update, and delete meetings with multiple proposed time slots
+- Add, update, and delete participant availability
+- Get recommendations for optimal meeting times based on participant availability
+- OpenAPI documentation with interactive Swagger UI
+- Comprehensive test suite including integration tests
+- Graceful shutdown handling
+- Structured logging with multiple levels
+- Docker support
+- Middleware for request logging and error handling
 
 ## Requirements
 
 - Go 1.22 or newer
 - PostgreSQL (optional, not implemented yet)
+- Docker (optional, for containerized deployment)
 
 ## Environment Variables
 
@@ -24,9 +29,11 @@ The application can be configured using the following environment variables:
 - `SERVER_READ_TIMEOUT`: Read timeout for the HTTP server (default: 5s)
 - `SERVER_WRITE_TIMEOUT`: Write timeout for the HTTP server (default: 10s)
 - `DB_DSN`: Database connection string (default: postgres://postgres:postgres@localhost:5432/meetsync?sslmode=disable)
-- `LOG_LEVEL`: Logging level (default: info)
+- `LOG_LEVEL`: Logging level (default: info, options: debug, info, warn, error, fatal)
 
 ## Running the Application
+
+### Local Development
 
 ```bash
 # Clone the repository
@@ -38,6 +45,16 @@ go build -o meetsync ./cmd/meetsync
 
 # Run the application
 ./meetsync
+```
+
+### Using Docker
+
+```bash
+# Build the Docker image
+docker build -t meetsync .
+
+# Run the container
+docker run -p 8080:8080 meetsync
 ```
 
 ## API Documentation
@@ -71,7 +88,7 @@ You can view the documentation in several ways:
 
 ## Running Tests
 
-The project includes a comprehensive test suite for all handlers and the router.
+The project includes a comprehensive test suite for all components.
 
 ```bash
 # Run all tests
@@ -82,6 +99,9 @@ go test -cover ./...
 
 # Run tests for a specific package
 go test ./internal/handlers
+
+# Run integration tests
+go test ./tests/integration
 ```
 
 ## API Endpoints
@@ -142,6 +162,22 @@ Request body:
 }
 ```
 
+#### Update a Meeting
+
+```
+PUT /api/meetings/{id}
+```
+
+Request body: Same as create meeting
+
+#### Delete a Meeting
+
+```
+DELETE /api/meetings/{id}
+```
+
+### Availability Management
+
 #### Add Participant Availability
 
 ```
@@ -160,6 +196,30 @@ Request body:
     }
   ]
 }
+```
+
+#### Update Availability
+
+```
+PUT /api/availabilities/{id}
+```
+
+Request body:
+```json
+{
+  "availableSlots": [
+    {
+      "startTime": "2025-01-12T14:00:00Z",
+      "endTime": "2025-01-12T16:00:00Z"
+    }
+  ]
+}
+```
+
+#### Delete Availability
+
+```
+DELETE /api/availabilities/{id}
 ```
 
 #### Get Meeting Recommendations
@@ -206,29 +266,43 @@ Response:
 
 ```
 meetsync/
+├── api/                    # API-related files
 ├── cmd/
-│   └── meetsync/
+│   └── meetsync/          # Application entry point
 │       └── main.go
-├── docs/
+├── docs/                   # Documentation files
 │   ├── README.md
 │   └── openapi.yaml
 ├── internal/
-│   ├── config/
+│   ├── config/            # Application configuration
 │   │   └── config.go
-│   ├── handlers/
+│   ├── handlers/          # HTTP request handlers
 │   │   ├── meeting.go
 │   │   ├── meeting_test.go
 │   │   ├── user.go
 │   │   └── user_test.go
-│   ├── models/
+│   ├── interfaces/        # Service interfaces
+│   │   └── services.go
+│   ├── middleware/        # HTTP middleware
+│   │   └── error.go
+│   ├── models/            # Data models
 │   │   ├── meeting.go
 │   │   └── user.go
-│   └── router/
+│   ├── repositories/      # Data access layer
+│   │   ├── user_repository.go
+│   │   └── user_repository_test.go
+│   └── router/            # HTTP routing
 │       ├── router.go
 │       └── router_test.go
 ├── pkg/
-│   └── logs/
+│   ├── errors/            # Error handling utilities
+│   │   └── errors.go
+│   └── logs/             # Logging utilities
 │       └── logger.go
+├── tests/
+│   └── integration/       # Integration tests
+├── Dockerfile            # Docker build configuration
 ├── go.mod
+├── go.sum
 └── README.md
 ```
