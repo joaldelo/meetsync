@@ -10,6 +10,7 @@ import (
 
 	"meetsync/internal/api"
 	"meetsync/internal/models"
+	"meetsync/pkg/errors"
 	"meetsync/pkg/logs"
 )
 
@@ -31,38 +32,31 @@ func NewMeetingHandler(userHandler *UserHandler) *MeetingHandler {
 }
 
 // CreateMeeting handles the creation of a new meeting
-func (h *MeetingHandler) CreateMeeting(w http.ResponseWriter, r *http.Request) {
+func (h *MeetingHandler) CreateMeeting(w http.ResponseWriter, r *http.Request) error {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
+		return errors.NewValidationError("Method not allowed", "Only POST method is allowed")
 	}
 
 	var req api.CreateMeetingRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		logs.Error("Failed to decode request body: %v", err)
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
+		return errors.NewValidationError("Invalid request body", err.Error())
 	}
 
 	// Validate request
 	if req.Title == "" {
-		http.Error(w, "Title is required", http.StatusBadRequest)
-		return
+		return errors.NewValidationError("Title is required", "")
 	}
 	if req.EstimatedDuration <= 0 {
-		http.Error(w, "Estimated duration must be positive", http.StatusBadRequest)
-		return
+		return errors.NewValidationError("Estimated duration must be positive", "")
 	}
 	if len(req.ProposedSlots) == 0 {
-		http.Error(w, "At least one proposed time slot is required", http.StatusBadRequest)
-		return
+		return errors.NewValidationError("At least one proposed time slot is required", "")
 	}
 
 	// Validate organizer exists
 	organizer, exists := h.userHandler.users[req.OrganizerID]
 	if !exists {
-		http.Error(w, "Organizer not found", http.StatusBadRequest)
-		return
+		return errors.NewNotFoundError("Organizer not found")
 	}
 
 	// Validate participants exist
@@ -70,8 +64,7 @@ func (h *MeetingHandler) CreateMeeting(w http.ResponseWriter, r *http.Request) {
 	for _, participantID := range req.ParticipantIDs {
 		participant, exists := h.userHandler.users[participantID]
 		if !exists {
-			http.Error(w, "Participant not found: "+participantID, http.StatusBadRequest)
-			return
+			return errors.NewNotFoundError("Participant not found: " + participantID)
 		}
 		participants = append(participants, participant)
 	}
@@ -95,7 +88,7 @@ func (h *MeetingHandler) CreateMeeting(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:         now,
 	}
 
-	// In a real application, you would save the meeting to a database
+	// Save meeting
 	h.meetings[meeting.ID] = meeting
 
 	logs.Info("Created meeting: %s by organizer %s", meeting.ID, organizer.Name)
@@ -108,57 +101,60 @@ func (h *MeetingHandler) CreateMeeting(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		logs.Error("Failed to encode response: %v", err)
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
-		return
+		return errors.NewInternalError("Failed to encode response", err)
 	}
+	return nil
 }
 
 // AddAvailability handles adding a participant's availability
-func (h *MeetingHandler) AddAvailability(w http.ResponseWriter, r *http.Request) {
+func (h *MeetingHandler) AddAvailability(w http.ResponseWriter, r *http.Request) error {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
+		return errors.NewValidationError("Method not allowed", "Only POST method is allowed")
 	}
 
 	var req api.AddAvailabilityRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		logs.Error("Failed to decode request body: %v", err)
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
+		return errors.NewValidationError("Invalid request body", err.Error())
 	}
 
 	// Validate request
 	if req.UserID == "" {
-		http.Error(w, "User ID is required", http.StatusBadRequest)
-		return
+		return errors.NewValidationError("User ID is required", "")
 	}
 	if req.MeetingID == "" {
-		http.Error(w, "Meeting ID is required", http.StatusBadRequest)
-		return
+		return errors.NewValidationError("Meeting ID is required", "")
 	}
 	if len(req.AvailableSlots) == 0 {
-		http.Error(w, "At least one available time slot is required", http.StatusBadRequest)
-		return
+		return errors.NewValidationError("At least one available time slot is required", "")
 	}
 
 	// Validate user exists
 	user, exists := h.userHandler.users[req.UserID]
 	if !exists {
-		http.Error(w, "User not found", http.StatusBadRequest)
-		return
+		return errors.NewNotFoundError("User not found")
 	}
 
 	// Validate meeting exists
 	meeting, exists := h.meetings[req.MeetingID]
 	if !exists {
-		http.Error(w, "Meeting not found", http.StatusBadRequest)
-		return
+		return errors.NewNotFoundError("Meeting not found")
 	}
 
-	// Assign IDs to time slots
-	for i := range req.AvailableSlots {
-		req.AvailableSlots[i].ID = uuid.New().String()
+	// Match available slots with proposed slots and assign correct IDs
+	var matchedSlots []models.TimeSlot
+	for _, availableSlot := range req.AvailableSlots {
+		matched := false
+		for _, proposedSlot := range meeting.ProposedSlots {
+			if availableSlot.StartTime.Equal(proposedSlot.StartTime) &&
+				availableSlot.EndTime.Equal(proposedSlot.EndTime) {
+				matchedSlots = append(matchedSlots, proposedSlot)
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return errors.NewValidationError("Available slot does not match any proposed slot", "")
+		}
 	}
 
 	// Create availability
@@ -168,37 +164,35 @@ func (h *MeetingHandler) AddAvailability(w http.ResponseWriter, r *http.Request)
 		ParticipantID:  req.UserID,
 		Participant:    &user,
 		MeetingID:      req.MeetingID,
-		AvailableSlots: req.AvailableSlots,
+		AvailableSlots: matchedSlots,
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
 
-	// In a real application, you would save the availability to a database
+	// Save availability
 	h.availabilities[availability.ID] = availability
 
 	logs.Info("Added availability for user %s in meeting %s", user.Name, meeting.Title)
 
 	w.WriteHeader(http.StatusCreated)
+	return nil
 }
 
 // GetRecommendations handles getting recommendations for a meeting
-func (h *MeetingHandler) GetRecommendations(w http.ResponseWriter, r *http.Request) {
+func (h *MeetingHandler) GetRecommendations(w http.ResponseWriter, r *http.Request) error {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
+		return errors.NewValidationError("Method not allowed", "Only GET method is allowed")
 	}
 
 	meetingID := r.URL.Query().Get("meetingId")
 	if meetingID == "" {
-		http.Error(w, "Meeting ID is required", http.StatusBadRequest)
-		return
+		return errors.NewValidationError("Meeting ID is required", "")
 	}
 
 	// Validate meeting exists
 	meeting, exists := h.meetings[meetingID]
 	if !exists {
-		http.Error(w, "Meeting not found", http.StatusNotFound)
-		return
+		return errors.NewNotFoundError("Meeting not found")
 	}
 
 	// Get all availabilities for this meeting
@@ -209,108 +203,41 @@ func (h *MeetingHandler) GetRecommendations(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	// Get all participants who have submitted availability
-	participantMap := make(map[string]models.User)
-	for _, availability := range meetingAvailabilities {
-		if user, exists := h.userHandler.users[availability.ParticipantID]; exists {
-			participantMap[user.ID] = user
-		}
-	}
-
-	// Calculate recommendations based on actual availabilities
-	var recommendations []models.RecommendedSlot
-	for _, slot := range meeting.ProposedSlots {
-		availableParticipants := make(map[string]bool)
-		unavailableParticipants := []models.User{}
-
-		// Count available participants for this slot
-		for _, availability := range meetingAvailabilities {
-			for _, availableSlot := range availability.AvailableSlots {
-				if availableSlot.StartTime.Equal(slot.StartTime) && availableSlot.EndTime.Equal(slot.EndTime) {
-					availableParticipants[availability.ParticipantID] = true
-					logs.Info("Found available participant %s for slot %v-%v",
-						availability.ParticipantID,
-						availableSlot.StartTime.Format("15:04"),
-						availableSlot.EndTime.Format("15:04"))
-					break
-				}
-			}
-		}
-
-		// Identify unavailable participants
-		for participantID, participant := range participantMap {
-			if !availableParticipants[participantID] {
-				unavailableParticipants = append(unavailableParticipants, participant)
-			}
-		}
-
-		rec := models.RecommendedSlot{
-			TimeSlot:                slot,
-			AvailableCount:          len(availableParticipants),
-			TotalParticipants:       len(participantMap),
-			UnavailableParticipants: unavailableParticipants,
-		}
-		logs.Info("Adding recommendation for slot %v-%v: available=%d total=%d",
-			slot.StartTime.Format("15:04"),
-			slot.EndTime.Format("15:04"),
-			rec.AvailableCount,
-			rec.TotalParticipants)
-		recommendations = append(recommendations, rec)
-	}
-
-	// Sort recommendations by available count (highest to lowest)
-	sort.Slice(recommendations, func(i, j int) bool {
-		return recommendations[i].AvailableCount > recommendations[j].AvailableCount
-	})
-
-	for i, rec := range recommendations {
-		logs.Info("After sorting - Slot[%d]: %v-%v available=%d",
-			i,
-			rec.TimeSlot.StartTime.Format("15:04"),
-			rec.TimeSlot.EndTime.Format("15:04"),
-			rec.AvailableCount)
-	}
+	// Calculate recommendations
+	recommendations := h.calculateRecommendations(meeting, meetingAvailabilities)
 
 	resp := api.GetRecommendationsResponse{
 		RecommendedSlots: recommendations,
 	}
 
-	logs.Info("Generated recommendations for meeting %s (%s)", meeting.Title, meetingID)
-
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		logs.Error("Failed to encode response: %v", err)
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
-		return
+		return errors.NewInternalError("Failed to encode response", err)
 	}
+	return nil
 }
 
 // UpdateMeeting handles updating an existing meeting
-func (h *MeetingHandler) UpdateMeeting(w http.ResponseWriter, r *http.Request) {
+func (h *MeetingHandler) UpdateMeeting(w http.ResponseWriter, r *http.Request) error {
 	if r.Method != http.MethodPut {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
+		return errors.NewValidationError("Method not allowed", "Only PUT method is allowed")
 	}
 
 	// Extract meeting ID from URL path
 	meetingID := r.URL.Path[len("/api/meetings/"):]
 	if meetingID == "" {
-		http.Error(w, "Meeting ID is required", http.StatusBadRequest)
-		return
+		return errors.NewValidationError("Meeting ID is required", "")
 	}
 
 	// Check if meeting exists
 	meeting, exists := h.meetings[meetingID]
 	if !exists {
-		http.Error(w, "Meeting not found", http.StatusNotFound)
-		return
+		return errors.NewNotFoundError("Meeting not found")
 	}
 
 	var req api.UpdateMeetingRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		logs.Error("Failed to decode request body: %v", err)
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
+		return errors.NewValidationError("Invalid request body", err.Error())
 	}
 
 	// Update fields if provided
@@ -333,8 +260,7 @@ func (h *MeetingHandler) UpdateMeeting(w http.ResponseWriter, r *http.Request) {
 		for _, participantID := range req.ParticipantIDs {
 			participant, exists := h.userHandler.users[participantID]
 			if !exists {
-				http.Error(w, "Participant not found: "+participantID, http.StatusBadRequest)
-				return
+				return errors.NewNotFoundError("Participant not found: " + participantID)
 			}
 			participants = append(participants, participant)
 		}
@@ -350,30 +276,26 @@ func (h *MeetingHandler) UpdateMeeting(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		logs.Error("Failed to encode response: %v", err)
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
-		return
+		return errors.NewInternalError("Failed to encode response", err)
 	}
+	return nil
 }
 
 // DeleteMeeting handles deleting an existing meeting
-func (h *MeetingHandler) DeleteMeeting(w http.ResponseWriter, r *http.Request) {
+func (h *MeetingHandler) DeleteMeeting(w http.ResponseWriter, r *http.Request) error {
 	if r.Method != http.MethodDelete {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
+		return errors.NewValidationError("Method not allowed", "Only DELETE method is allowed")
 	}
 
 	// Extract meeting ID from URL path
 	meetingID := r.URL.Path[len("/api/meetings/"):]
 	if meetingID == "" {
-		http.Error(w, "Meeting ID is required", http.StatusBadRequest)
-		return
+		return errors.NewValidationError("Meeting ID is required", "")
 	}
 
 	// Check if meeting exists
 	if _, exists := h.meetings[meetingID]; !exists {
-		http.Error(w, "Meeting not found", http.StatusNotFound)
-		return
+		return errors.NewNotFoundError("Meeting not found")
 	}
 
 	// Delete meeting and associated availabilities
@@ -387,39 +309,34 @@ func (h *MeetingHandler) DeleteMeeting(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+	return nil
 }
 
 // UpdateAvailability handles updating a participant's availability
-func (h *MeetingHandler) UpdateAvailability(w http.ResponseWriter, r *http.Request) {
+func (h *MeetingHandler) UpdateAvailability(w http.ResponseWriter, r *http.Request) error {
 	if r.Method != http.MethodPut {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
+		return errors.NewValidationError("Method not allowed", "Only PUT method is allowed")
 	}
 
 	// Extract availability ID from URL path
 	availabilityID := r.URL.Path[len("/api/availabilities/"):]
 	if availabilityID == "" {
-		http.Error(w, "Availability ID is required", http.StatusBadRequest)
-		return
+		return errors.NewValidationError("Availability ID is required", "")
 	}
 
 	// Check if availability exists
 	availability, exists := h.availabilities[availabilityID]
 	if !exists {
-		http.Error(w, "Availability not found", http.StatusNotFound)
-		return
+		return errors.NewNotFoundError("Availability not found")
 	}
 
 	var req api.UpdateAvailabilityRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		logs.Error("Failed to decode request body: %v", err)
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
+		return errors.NewValidationError("Invalid request body", err.Error())
 	}
 
 	if len(req.AvailableSlots) == 0 {
-		http.Error(w, "At least one available time slot is required", http.StatusBadRequest)
-		return
+		return errors.NewValidationError("At least one available time slot is required", "")
 	}
 
 	// Assign IDs to new time slots
@@ -438,56 +355,50 @@ func (h *MeetingHandler) UpdateAvailability(w http.ResponseWriter, r *http.Reque
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		logs.Error("Failed to encode response: %v", err)
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
-		return
+		return errors.NewInternalError("Failed to encode response", err)
 	}
+	return nil
 }
 
 // DeleteAvailability handles deleting a participant's availability
-func (h *MeetingHandler) DeleteAvailability(w http.ResponseWriter, r *http.Request) {
+func (h *MeetingHandler) DeleteAvailability(w http.ResponseWriter, r *http.Request) error {
 	if r.Method != http.MethodDelete {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
+		return errors.NewValidationError("Method not allowed", "Only DELETE method is allowed")
 	}
 
 	// Extract availability ID from URL path
 	availabilityID := r.URL.Path[len("/api/availabilities/"):]
 	if availabilityID == "" {
-		http.Error(w, "Availability ID is required", http.StatusBadRequest)
-		return
+		return errors.NewValidationError("Availability ID is required", "")
 	}
 
 	// Check if availability exists
 	if _, exists := h.availabilities[availabilityID]; !exists {
-		http.Error(w, "Availability not found", http.StatusNotFound)
-		return
+		return errors.NewNotFoundError("Availability not found")
 	}
 
 	// Delete availability
 	delete(h.availabilities, availabilityID)
 
 	w.WriteHeader(http.StatusNoContent)
+	return nil
 }
 
 // GetAvailability handles getting a participant's availability
-func (h *MeetingHandler) GetAvailability(w http.ResponseWriter, r *http.Request) {
+func (h *MeetingHandler) GetAvailability(w http.ResponseWriter, r *http.Request) error {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
+		return errors.NewValidationError("Method not allowed", "Only GET method is allowed")
 	}
 
 	// Get query parameters
 	userID := r.URL.Query().Get("userId")
 	if userID == "" {
-		http.Error(w, "User ID is required", http.StatusBadRequest)
-		return
+		return errors.NewValidationError("User ID is required", "")
 	}
 
 	meetingID := r.URL.Query().Get("meetingId")
 	if meetingID == "" {
-		http.Error(w, "Meeting ID is required", http.StatusBadRequest)
-		return
+		return errors.NewValidationError("Meeting ID is required", "")
 	}
 
 	// Find availability for the user and meeting
@@ -502,8 +413,7 @@ func (h *MeetingHandler) GetAvailability(w http.ResponseWriter, r *http.Request)
 	}
 
 	if !found {
-		http.Error(w, "Availability not found", http.StatusNotFound)
-		return
+		return errors.NewNotFoundError("Availability not found")
 	}
 
 	resp := api.GetAvailabilityResponse{
@@ -512,8 +422,93 @@ func (h *MeetingHandler) GetAvailability(w http.ResponseWriter, r *http.Request)
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		logs.Error("Failed to encode response: %v", err)
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
-		return
+		return errors.NewInternalError("Failed to encode response", err)
 	}
+	return nil
+}
+
+// calculateRecommendations calculates recommended time slots based on participant availability
+func (h *MeetingHandler) calculateRecommendations(meeting models.Meeting, availabilities []models.Availability) []models.RecommendedSlot {
+	// Map to track the number of participants available for each proposed slot
+	slotAvailability := make(map[string]int)
+	slotMap := make(map[string]models.TimeSlot)
+	unavailableParticipants := make(map[string][]models.User)
+
+	// Initialize the maps with proposed slots
+	for _, slot := range meeting.ProposedSlots {
+		slotAvailability[slot.ID] = 0
+		slotMap[slot.ID] = slot
+		unavailableParticipants[slot.ID] = []models.User{}
+	}
+
+	// Track which participants are available for each slot
+	participantAvailability := make(map[string]map[string]bool) // participantID -> slotID -> available
+	allParticipants := append([]models.User{*meeting.Organizer}, meeting.Participants...)
+	for _, participant := range allParticipants {
+		participantAvailability[participant.ID] = make(map[string]bool)
+		for _, slot := range meeting.ProposedSlots {
+			participantAvailability[participant.ID][slot.ID] = false
+		}
+	}
+
+	// Process each availability entry
+	for _, availability := range availabilities {
+		// Skip if not a participant or organizer
+		isValid := false
+		if availability.ParticipantID == meeting.OrganizerID {
+			isValid = true
+		} else {
+			for _, participant := range meeting.Participants {
+				if participant.ID == availability.ParticipantID {
+					isValid = true
+					break
+				}
+			}
+		}
+		if !isValid {
+			continue
+		}
+
+		// For each available slot in the availability entry
+		for _, availableSlot := range availability.AvailableSlots {
+			// Match with proposed slots
+			for _, proposedSlot := range meeting.ProposedSlots {
+				if availableSlot.StartTime.Equal(proposedSlot.StartTime) &&
+					availableSlot.EndTime.Equal(proposedSlot.EndTime) {
+					slotAvailability[proposedSlot.ID]++
+					participantAvailability[availability.ParticipantID][proposedSlot.ID] = true
+				}
+			}
+		}
+	}
+
+	// Build unavailable participants list for each slot
+	for _, participant := range allParticipants {
+		for slotID := range slotMap {
+			if !participantAvailability[participant.ID][slotID] {
+				unavailableParticipants[slotID] = append(unavailableParticipants[slotID], participant)
+			}
+		}
+	}
+
+	// Convert to recommended slots
+	recommendations := make([]models.RecommendedSlot, 0, len(meeting.ProposedSlots))
+	totalParticipants := len(allParticipants)
+
+	for slotID, count := range slotAvailability {
+		slot := slotMap[slotID]
+		recommendations = append(recommendations, models.RecommendedSlot{
+			TimeSlot:                slot,
+			AvailableCount:          count,
+			TotalParticipants:       totalParticipants,
+			UnavailableParticipants: unavailableParticipants[slotID],
+		})
+	}
+
+	// Sort recommendations by available count in descending order
+	sort.Slice(recommendations, func(i, j int) bool {
+		return recommendations[i].AvailableCount > recommendations[j].AvailableCount
+	})
+
+	return recommendations
 }

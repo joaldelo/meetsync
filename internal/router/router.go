@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"meetsync/internal/handlers"
+	"meetsync/internal/middleware"
 	"meetsync/pkg/logs"
 )
 
@@ -25,31 +26,38 @@ func (r *Router) Setup() {
 	userHandler := handlers.NewUserHandler()
 	meetingHandler := handlers.NewMeetingHandler(userHandler)
 
-	// Register user routes
-	r.mux.HandleFunc("POST /api/users", userHandler.CreateUser)
-	r.mux.HandleFunc("GET /api/users", userHandler.ListUsers)
-	r.mux.HandleFunc("GET /api/users/{id}", userHandler.GetUser)
+	// Register user routes with error handling
+	r.mux.HandleFunc("POST /api/users", middleware.WithErrorHandling(userHandler.CreateUser))
+	r.mux.HandleFunc("GET /api/users", middleware.WithErrorHandling(userHandler.ListUsers))
+	r.mux.HandleFunc("GET /api/users/{id}", middleware.WithErrorHandling(userHandler.GetUser))
 
-	// Register meeting routes
-	r.mux.HandleFunc("POST /api/meetings", meetingHandler.CreateMeeting)
-	r.mux.HandleFunc("PUT /api/meetings/{id}", meetingHandler.UpdateMeeting)
-	r.mux.HandleFunc("DELETE /api/meetings/{id}", meetingHandler.DeleteMeeting)
+	// Register meeting routes with error handling
+	r.mux.HandleFunc("POST /api/meetings", middleware.WithErrorHandling(meetingHandler.CreateMeeting))
+	r.mux.HandleFunc("PUT /api/meetings/{id}", middleware.WithErrorHandling(meetingHandler.UpdateMeeting))
+	r.mux.HandleFunc("DELETE /api/meetings/{id}", middleware.WithErrorHandling(meetingHandler.DeleteMeeting))
 
-	// Register availability routes
-	r.mux.HandleFunc("POST /api/availabilities", meetingHandler.AddAvailability)
-	r.mux.HandleFunc("GET /api/availabilities", meetingHandler.GetAvailability)
-	r.mux.HandleFunc("PUT /api/availabilities/{id}", meetingHandler.UpdateAvailability)
-	r.mux.HandleFunc("DELETE /api/availabilities/{id}", meetingHandler.DeleteAvailability)
+	// Register availability routes with error handling
+	r.mux.HandleFunc("POST /api/availabilities", middleware.WithErrorHandling(meetingHandler.AddAvailability))
+	r.mux.HandleFunc("GET /api/availabilities", middleware.WithErrorHandling(meetingHandler.GetAvailability))
+	r.mux.HandleFunc("PUT /api/availabilities/{id}", middleware.WithErrorHandling(meetingHandler.UpdateAvailability))
+	r.mux.HandleFunc("DELETE /api/availabilities/{id}", middleware.WithErrorHandling(meetingHandler.DeleteAvailability))
 
-	// Register recommendations route
-	r.mux.HandleFunc("GET /api/recommendations", meetingHandler.GetRecommendations)
+	// Register recommendations route with error handling
+	r.mux.HandleFunc("GET /api/recommendations", middleware.WithErrorHandling(meetingHandler.GetRecommendations))
 
 	// Serve OpenAPI documentation
 	r.mux.HandleFunc("GET /docs", serveOpenAPIUI)
 	r.mux.HandleFunc("GET /docs/openapi.yaml", serveOpenAPISpec)
 
-	// Add middleware for logging
-	r.mux = r.logMiddleware(r.mux)
+	// Create a new handler with the middleware chain
+	handler := middleware.Chain(
+		middleware.RequestLogger,
+		r.logMiddleware,
+	)(r.mux)
+
+	// Update the router's handler
+	r.mux = http.NewServeMux()
+	r.mux.Handle("/", handler)
 }
 
 // ServeHTTP implements the http.Handler interface
@@ -58,15 +66,11 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 // logMiddleware logs all requests
-func (r *Router) logMiddleware(next http.Handler) *http.ServeMux {
-	newMux := http.NewServeMux()
-
-	newMux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
+func (r *Router) logMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		logs.Info("%s %s %s", req.Method, req.URL.Path, req.RemoteAddr)
 		next.ServeHTTP(w, req)
 	})
-
-	return newMux
 }
 
 // serveOpenAPISpec serves the OpenAPI specification file

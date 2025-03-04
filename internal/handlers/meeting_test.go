@@ -10,7 +10,28 @@ import (
 
 	"meetsync/internal/api"
 	"meetsync/internal/models"
+	"meetsync/pkg/errors"
 )
+
+// Helper function to validate error response
+func validateMeetingErrorResponse(t *testing.T, w *httptest.ResponseRecorder, expectedMessage string, expectedStatus int) {
+	var errResp struct {
+		Error struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+			Details string `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &errResp); err != nil {
+		t.Fatalf("Failed to unmarshal error response: %v", err)
+	}
+	if errResp.Error.Message != expectedMessage {
+		t.Errorf("Expected error message '%s', got '%s'", expectedMessage, errResp.Error.Message)
+	}
+	if w.Code != expectedStatus {
+		t.Errorf("Expected status code %d, got %d", expectedStatus, w.Code)
+	}
+}
 
 func TestCreateMeeting(t *testing.T) {
 	// Create handlers
@@ -107,9 +128,7 @@ func TestCreateMeeting(t *testing.T) {
 			},
 			expectedStatus: http.StatusBadRequest,
 			validateFunc: func(t *testing.T, w *httptest.ResponseRecorder) {
-				if w.Body.String() != "Title is required\n" {
-					t.Errorf("Expected error message 'Title is required', got '%s'", w.Body.String())
-				}
+				validateMeetingErrorResponse(t, w, "Title is required", http.StatusBadRequest)
 			},
 		},
 		{
@@ -127,9 +146,7 @@ func TestCreateMeeting(t *testing.T) {
 			},
 			expectedStatus: http.StatusBadRequest,
 			validateFunc: func(t *testing.T, w *httptest.ResponseRecorder) {
-				if w.Body.String() != "Estimated duration must be positive\n" {
-					t.Errorf("Expected error message 'Estimated duration must be positive', got '%s'", w.Body.String())
-				}
+				validateMeetingErrorResponse(t, w, "Estimated duration must be positive", http.StatusBadRequest)
 			},
 		},
 		{
@@ -142,9 +159,7 @@ func TestCreateMeeting(t *testing.T) {
 			},
 			expectedStatus: http.StatusBadRequest,
 			validateFunc: func(t *testing.T, w *httptest.ResponseRecorder) {
-				if w.Body.String() != "At least one proposed time slot is required\n" {
-					t.Errorf("Expected error message 'At least one proposed time slot is required', got '%s'", w.Body.String())
-				}
+				validateMeetingErrorResponse(t, w, "At least one proposed time slot is required", http.StatusBadRequest)
 			},
 		},
 		{
@@ -160,11 +175,9 @@ func TestCreateMeeting(t *testing.T) {
 					},
 				},
 			},
-			expectedStatus: http.StatusBadRequest,
+			expectedStatus: http.StatusNotFound,
 			validateFunc: func(t *testing.T, w *httptest.ResponseRecorder) {
-				if w.Body.String() != "Organizer not found\n" {
-					t.Errorf("Expected error message 'Organizer not found', got '%s'", w.Body.String())
-				}
+				validateMeetingErrorResponse(t, w, "Organizer not found", http.StatusNotFound)
 			},
 		},
 		{
@@ -181,11 +194,9 @@ func TestCreateMeeting(t *testing.T) {
 				},
 				ParticipantIDs: []string{participant1.ID, "non-existent-id"},
 			},
-			expectedStatus: http.StatusBadRequest,
+			expectedStatus: http.StatusNotFound,
 			validateFunc: func(t *testing.T, w *httptest.ResponseRecorder) {
-				if w.Body.String() != "Participant not found: non-existent-id\n" {
-					t.Errorf("Expected error message 'Participant not found: non-existent-id', got '%s'", w.Body.String())
-				}
+				validateMeetingErrorResponse(t, w, "Participant not found: non-existent-id", http.StatusNotFound)
 			},
 		},
 	}
@@ -208,11 +219,16 @@ func TestCreateMeeting(t *testing.T) {
 			w := httptest.NewRecorder()
 
 			// Call handler
-			meetingHandler.CreateMeeting(w, req)
-
-			// Check status code
-			if w.Code != tc.expectedStatus {
-				t.Errorf("Expected status code %d, got %d", tc.expectedStatus, w.Code)
+			err = meetingHandler.CreateMeeting(w, req)
+			if err != nil {
+				// Error should be handled by middleware in production
+				if appErr, ok := err.(*errors.AppError); ok {
+					w.WriteHeader(appErr.HTTPStatusCode())
+					errors.WriteError(w, appErr)
+				} else {
+					w.WriteHeader(http.StatusInternalServerError)
+					errors.WriteError(w, errors.NewInternalError("Internal server error", err))
+				}
 			}
 
 			// Run validation function
@@ -298,9 +314,7 @@ func TestAddAvailability(t *testing.T) {
 			},
 			expectedStatus: http.StatusBadRequest,
 			validateFunc: func(t *testing.T, w *httptest.ResponseRecorder) {
-				if w.Body.String() != "User ID is required\n" {
-					t.Errorf("Expected error message 'User ID is required', got '%s'", w.Body.String())
-				}
+				validateMeetingErrorResponse(t, w, "User ID is required", http.StatusBadRequest)
 			},
 		},
 		{
@@ -316,9 +330,7 @@ func TestAddAvailability(t *testing.T) {
 			},
 			expectedStatus: http.StatusBadRequest,
 			validateFunc: func(t *testing.T, w *httptest.ResponseRecorder) {
-				if w.Body.String() != "Meeting ID is required\n" {
-					t.Errorf("Expected error message 'Meeting ID is required', got '%s'", w.Body.String())
-				}
+				validateMeetingErrorResponse(t, w, "Meeting ID is required", http.StatusBadRequest)
 			},
 		},
 		{
@@ -330,9 +342,7 @@ func TestAddAvailability(t *testing.T) {
 			},
 			expectedStatus: http.StatusBadRequest,
 			validateFunc: func(t *testing.T, w *httptest.ResponseRecorder) {
-				if w.Body.String() != "At least one available time slot is required\n" {
-					t.Errorf("Expected error message 'At least one available time slot is required', got '%s'", w.Body.String())
-				}
+				validateMeetingErrorResponse(t, w, "At least one available time slot is required", http.StatusBadRequest)
 			},
 		},
 		{
@@ -347,11 +357,9 @@ func TestAddAvailability(t *testing.T) {
 					},
 				},
 			},
-			expectedStatus: http.StatusBadRequest,
+			expectedStatus: http.StatusNotFound,
 			validateFunc: func(t *testing.T, w *httptest.ResponseRecorder) {
-				if w.Body.String() != "User not found\n" {
-					t.Errorf("Expected error message 'User not found', got '%s'", w.Body.String())
-				}
+				validateMeetingErrorResponse(t, w, "User not found", http.StatusNotFound)
 			},
 		},
 		{
@@ -366,11 +374,9 @@ func TestAddAvailability(t *testing.T) {
 					},
 				},
 			},
-			expectedStatus: http.StatusBadRequest,
+			expectedStatus: http.StatusNotFound,
 			validateFunc: func(t *testing.T, w *httptest.ResponseRecorder) {
-				if w.Body.String() != "Meeting not found\n" {
-					t.Errorf("Expected error message 'Meeting not found', got '%s'", w.Body.String())
-				}
+				validateMeetingErrorResponse(t, w, "Meeting not found", http.StatusNotFound)
 			},
 		},
 	}
@@ -393,11 +399,16 @@ func TestAddAvailability(t *testing.T) {
 			w := httptest.NewRecorder()
 
 			// Call handler
-			meetingHandler.AddAvailability(w, req)
-
-			// Check status code
-			if w.Code != tc.expectedStatus {
-				t.Errorf("Expected status code %d, got %d", tc.expectedStatus, w.Code)
+			err = meetingHandler.AddAvailability(w, req)
+			if err != nil {
+				// Error should be handled by middleware in production
+				if appErr, ok := err.(*errors.AppError); ok {
+					w.WriteHeader(appErr.HTTPStatusCode())
+					errors.WriteError(w, appErr)
+				} else {
+					w.WriteHeader(http.StatusInternalServerError)
+					errors.WriteError(w, errors.NewInternalError("Internal server error", err))
+				}
 			}
 
 			// Run validation function
@@ -418,6 +429,21 @@ func TestGetRecommendations(t *testing.T) {
 		Email: "user@example.com",
 	}
 	userHandler.users[user.ID] = user
+
+	// Create additional participants
+	participant1 := models.User{
+		ID:    "participant1-id",
+		Name:  "Participant 1",
+		Email: "participant1@example.com",
+	}
+	userHandler.users[participant1.ID] = participant1
+
+	participant2 := models.User{
+		ID:    "participant2-id",
+		Name:  "Participant 2",
+		Email: "participant2@example.com",
+	}
+	userHandler.users[participant2.ID] = participant2
 
 	// Create a test meeting
 	now := time.Now()
@@ -442,9 +468,63 @@ func TestGetRecommendations(t *testing.T) {
 				EndTime:   dayAfterTomorrow.Add(time.Hour),
 			},
 		},
-		Participants: []models.User{user},
+		Participants: []models.User{participant1, participant2},
 	}
 	meetingHandler.meetings[meeting.ID] = meeting
+
+	// Add availability for participants
+	// User (organizer) is available for both slots
+	availability1 := models.Availability{
+		ID:            "availability1-id",
+		ParticipantID: user.ID,
+		Participant:   &user,
+		MeetingID:     meeting.ID,
+		AvailableSlots: []models.TimeSlot{
+			{
+				ID:        "slot1",
+				StartTime: tomorrow,
+				EndTime:   tomorrow.Add(time.Hour),
+			},
+			{
+				ID:        "slot2",
+				StartTime: dayAfterTomorrow,
+				EndTime:   dayAfterTomorrow.Add(time.Hour),
+			},
+		},
+	}
+	meetingHandler.availabilities[availability1.ID] = availability1
+
+	// Participant 1 is available for first slot only
+	availability2 := models.Availability{
+		ID:            "availability2-id",
+		ParticipantID: participant1.ID,
+		Participant:   &participant1,
+		MeetingID:     meeting.ID,
+		AvailableSlots: []models.TimeSlot{
+			{
+				ID:        "slot1",
+				StartTime: tomorrow,
+				EndTime:   tomorrow.Add(time.Hour),
+			},
+		},
+	}
+	meetingHandler.availabilities[availability2.ID] = availability2
+
+	// Participant 2 is available for second slot only
+	availability3 := models.Availability{
+		ID:            "availability3-id",
+		ParticipantID: participant2.ID,
+		Participant:   &participant2,
+		MeetingID:     meeting.ID,
+		AvailableSlots: []models.TimeSlot{
+			{
+				ID:        "slot2",
+				StartTime: dayAfterTomorrow,
+				EndTime:   dayAfterTomorrow.Add(time.Hour),
+			},
+		},
+	}
+	meetingHandler.availabilities[availability3.ID] = availability3
 
 	// Test cases
 	tests := []struct {
@@ -466,6 +546,35 @@ func TestGetRecommendations(t *testing.T) {
 				if len(resp.RecommendedSlots) == 0 {
 					t.Error("Expected at least one recommended slot")
 				}
+
+				// Verify the recommendations
+				if len(resp.RecommendedSlots) != 2 {
+					t.Errorf("Expected 2 recommended slots, got %d", len(resp.RecommendedSlots))
+				}
+
+				// First slot should have 2 available participants (organizer and participant1)
+				firstSlot := resp.RecommendedSlots[0]
+				if firstSlot.AvailableCount != 2 {
+					t.Errorf("Expected 2 available participants for first slot, got %d", firstSlot.AvailableCount)
+				}
+				if firstSlot.TotalParticipants != 3 {
+					t.Errorf("Expected 3 total participants (2 participants + organizer), got %d", firstSlot.TotalParticipants)
+				}
+				if len(firstSlot.UnavailableParticipants) != 1 {
+					t.Errorf("Expected 1 unavailable participant for first slot, got %d", len(firstSlot.UnavailableParticipants))
+				}
+
+				// Second slot should have 2 available participants (organizer and participant2)
+				secondSlot := resp.RecommendedSlots[1]
+				if secondSlot.AvailableCount != 2 {
+					t.Errorf("Expected 2 available participants for second slot, got %d", secondSlot.AvailableCount)
+				}
+				if secondSlot.TotalParticipants != 3 {
+					t.Errorf("Expected 3 total participants (2 participants + organizer), got %d", secondSlot.TotalParticipants)
+				}
+				if len(secondSlot.UnavailableParticipants) != 1 {
+					t.Errorf("Expected 1 unavailable participant for second slot, got %d", len(secondSlot.UnavailableParticipants))
+				}
 			},
 		},
 		{
@@ -473,9 +582,7 @@ func TestGetRecommendations(t *testing.T) {
 			meetingID:      "",
 			expectedStatus: http.StatusBadRequest,
 			validateFunc: func(t *testing.T, w *httptest.ResponseRecorder) {
-				if w.Body.String() != "Meeting ID is required\n" {
-					t.Errorf("Expected error message 'Meeting ID is required', got '%s'", w.Body.String())
-				}
+				validateMeetingErrorResponse(t, w, "Meeting ID is required", http.StatusBadRequest)
 			},
 		},
 		{
@@ -483,9 +590,7 @@ func TestGetRecommendations(t *testing.T) {
 			meetingID:      "non-existent-id",
 			expectedStatus: http.StatusNotFound,
 			validateFunc: func(t *testing.T, w *httptest.ResponseRecorder) {
-				if w.Body.String() != "Meeting not found\n" {
-					t.Errorf("Expected error message 'Meeting not found', got '%s'", w.Body.String())
-				}
+				validateMeetingErrorResponse(t, w, "Meeting not found", http.StatusNotFound)
 			},
 		},
 	}
@@ -503,11 +608,16 @@ func TestGetRecommendations(t *testing.T) {
 			w := httptest.NewRecorder()
 
 			// Call handler
-			meetingHandler.GetRecommendations(w, req)
-
-			// Check status code
-			if w.Code != tc.expectedStatus {
-				t.Errorf("Expected status code %d, got %d", tc.expectedStatus, w.Code)
+			err = meetingHandler.GetRecommendations(w, req)
+			if err != nil {
+				// Error should be handled by middleware in production
+				if appErr, ok := err.(*errors.AppError); ok {
+					w.WriteHeader(appErr.HTTPStatusCode())
+					errors.WriteError(w, appErr)
+				} else {
+					w.WriteHeader(http.StatusInternalServerError)
+					errors.WriteError(w, errors.NewInternalError("Internal server error", err))
+				}
 			}
 
 			// Run validation function
@@ -607,9 +717,7 @@ func TestUpdateMeeting(t *testing.T) {
 			},
 			expectedStatus: http.StatusNotFound,
 			validateFunc: func(t *testing.T, w *httptest.ResponseRecorder) {
-				if w.Body.String() != "Meeting not found\n" {
-					t.Errorf("Expected error message 'Meeting not found', got '%s'", w.Body.String())
-				}
+				validateMeetingErrorResponse(t, w, "Meeting not found", http.StatusNotFound)
 			},
 		},
 		{
@@ -618,11 +726,9 @@ func TestUpdateMeeting(t *testing.T) {
 			requestBody: api.UpdateMeetingRequest{
 				ParticipantIDs: []string{"non-existent-id"},
 			},
-			expectedStatus: http.StatusBadRequest,
+			expectedStatus: http.StatusNotFound,
 			validateFunc: func(t *testing.T, w *httptest.ResponseRecorder) {
-				if w.Body.String() != "Participant not found: non-existent-id\n" {
-					t.Errorf("Expected error message 'Participant not found: non-existent-id', got '%s'", w.Body.String())
-				}
+				validateMeetingErrorResponse(t, w, "Participant not found: non-existent-id", http.StatusNotFound)
 			},
 		},
 	}
@@ -641,10 +747,16 @@ func TestUpdateMeeting(t *testing.T) {
 			req.Header.Set("Content-Type", "application/json")
 
 			w := httptest.NewRecorder()
-			meetingHandler.UpdateMeeting(w, req)
-
-			if w.Code != tc.expectedStatus {
-				t.Errorf("Expected status code %d, got %d", tc.expectedStatus, w.Code)
+			err = meetingHandler.UpdateMeeting(w, req)
+			if err != nil {
+				// Error should be handled by middleware in production
+				if appErr, ok := err.(*errors.AppError); ok {
+					w.WriteHeader(appErr.HTTPStatusCode())
+					errors.WriteError(w, appErr)
+				} else {
+					w.WriteHeader(http.StatusInternalServerError)
+					errors.WriteError(w, errors.NewInternalError("Internal server error", err))
+				}
 			}
 
 			tc.validateFunc(t, w)
@@ -734,7 +846,17 @@ func TestDeleteMeeting(t *testing.T) {
 			}
 
 			w := httptest.NewRecorder()
-			meetingHandler.DeleteMeeting(w, req)
+			err = meetingHandler.DeleteMeeting(w, req)
+			if err != nil {
+				// Error should be handled by middleware in production
+				if appErr, ok := err.(*errors.AppError); ok {
+					w.WriteHeader(appErr.HTTPStatusCode())
+					errors.WriteError(w, appErr)
+				} else {
+					w.WriteHeader(http.StatusInternalServerError)
+					errors.WriteError(w, errors.NewInternalError("Internal server error", err))
+				}
+			}
 
 			if w.Code != tc.expectedStatus {
 				t.Errorf("Expected status code %d, got %d", tc.expectedStatus, w.Code)
@@ -833,9 +955,7 @@ func TestUpdateAvailability(t *testing.T) {
 			},
 			expectedStatus: http.StatusNotFound,
 			validateFunc: func(t *testing.T, w *httptest.ResponseRecorder) {
-				if w.Body.String() != "Availability not found\n" {
-					t.Errorf("Expected error message 'Availability not found', got '%s'", w.Body.String())
-				}
+				validateMeetingErrorResponse(t, w, "Availability not found", http.StatusNotFound)
 			},
 		},
 		{
@@ -846,9 +966,7 @@ func TestUpdateAvailability(t *testing.T) {
 			},
 			expectedStatus: http.StatusBadRequest,
 			validateFunc: func(t *testing.T, w *httptest.ResponseRecorder) {
-				if w.Body.String() != "At least one available time slot is required\n" {
-					t.Errorf("Expected error message 'At least one available time slot is required', got '%s'", w.Body.String())
-				}
+				validateMeetingErrorResponse(t, w, "At least one available time slot is required", http.StatusBadRequest)
 			},
 		},
 	}
@@ -867,10 +985,16 @@ func TestUpdateAvailability(t *testing.T) {
 			req.Header.Set("Content-Type", "application/json")
 
 			w := httptest.NewRecorder()
-			meetingHandler.UpdateAvailability(w, req)
-
-			if w.Code != tc.expectedStatus {
-				t.Errorf("Expected status code %d, got %d", tc.expectedStatus, w.Code)
+			err = meetingHandler.UpdateAvailability(w, req)
+			if err != nil {
+				// Error should be handled by middleware in production
+				if appErr, ok := err.(*errors.AppError); ok {
+					w.WriteHeader(appErr.HTTPStatusCode())
+					errors.WriteError(w, appErr)
+				} else {
+					w.WriteHeader(http.StatusInternalServerError)
+					errors.WriteError(w, errors.NewInternalError("Internal server error", err))
+				}
 			}
 
 			tc.validateFunc(t, w)
@@ -951,7 +1075,17 @@ func TestDeleteAvailability(t *testing.T) {
 			}
 
 			w := httptest.NewRecorder()
-			meetingHandler.DeleteAvailability(w, req)
+			err = meetingHandler.DeleteAvailability(w, req)
+			if err != nil {
+				// Error should be handled by middleware in production
+				if appErr, ok := err.(*errors.AppError); ok {
+					w.WriteHeader(appErr.HTTPStatusCode())
+					errors.WriteError(w, appErr)
+				} else {
+					w.WriteHeader(http.StatusInternalServerError)
+					errors.WriteError(w, errors.NewInternalError("Internal server error", err))
+				}
+			}
 
 			if w.Code != tc.expectedStatus {
 				t.Errorf("Expected status code %d, got %d", tc.expectedStatus, w.Code)

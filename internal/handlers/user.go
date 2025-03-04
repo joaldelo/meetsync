@@ -10,6 +10,7 @@ import (
 
 	"meetsync/internal/api"
 	"meetsync/internal/models"
+	"meetsync/pkg/errors"
 	"meetsync/pkg/logs"
 )
 
@@ -27,34 +28,28 @@ func NewUserHandler() *UserHandler {
 }
 
 // CreateUser handles the creation of a new user
-func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
+func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) error {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
+		return errors.NewValidationError("Method not allowed", "Only POST method is allowed")
 	}
 
 	var req api.CreateUserRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		logs.Error("Failed to decode request body: %v", err)
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
+		return errors.NewValidationError("Invalid request body", err.Error())
 	}
 
 	// Validate request
 	if req.Name == "" {
-		http.Error(w, "Name is required", http.StatusBadRequest)
-		return
+		return errors.NewValidationError("Name is required", "")
 	}
 	if req.Email == "" {
-		http.Error(w, "Email is required", http.StatusBadRequest)
-		return
+		return errors.NewValidationError("Email is required", "")
 	}
 
 	// Check if email is already in use
 	for _, user := range h.users {
 		if strings.EqualFold(user.Email, req.Email) {
-			http.Error(w, "Email is already in use", http.StatusConflict)
-			return
+			return errors.NewConflictError("Email is already in use")
 		}
 	}
 
@@ -81,33 +76,28 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		logs.Error("Failed to encode response: %v", err)
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
-		return
+		return errors.NewInternalError("Failed to encode response", err)
 	}
+	return nil
 }
 
 // GetUser handles fetching a user by ID
-func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
+func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) error {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
+		return errors.NewValidationError("Method not allowed", "Only GET method is allowed")
 	}
 
 	// Extract user ID from path
-	// In a real application, you would use a router that supports path parameters
 	parts := strings.Split(r.URL.Path, "/")
 	if len(parts) < 4 {
-		http.Error(w, "Invalid path", http.StatusBadRequest)
-		return
+		return errors.NewValidationError("Invalid path", "User ID not provided")
 	}
 	userID := parts[3]
 
 	// Get user
 	user, exists := h.users[userID]
 	if !exists {
-		http.Error(w, "User not found", http.StatusNotFound)
-		return
+		return errors.NewNotFoundError("User not found")
 	}
 
 	// Return response
@@ -117,17 +107,15 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		logs.Error("Failed to encode response: %v", err)
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
-		return
+		return errors.NewInternalError("Failed to encode response", err)
 	}
+	return nil
 }
 
 // ListUsers handles listing all users
-func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
+func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) error {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
+		return errors.NewValidationError("Method not allowed", "Only GET method is allowed")
 	}
 
 	// Get all users
@@ -143,8 +131,7 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		logs.Error("Failed to encode response: %v", err)
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
-		return
+		return errors.NewInternalError("Failed to encode response", err)
 	}
+	return nil
 }

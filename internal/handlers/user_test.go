@@ -9,7 +9,28 @@ import (
 
 	"meetsync/internal/api"
 	"meetsync/internal/models"
+	"meetsync/pkg/errors"
 )
+
+// Helper function to validate error response
+func validateErrorResponse(t *testing.T, w *httptest.ResponseRecorder, expectedMessage string, expectedStatus int) {
+	var errResp struct {
+		Error struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+			Details string `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &errResp); err != nil {
+		t.Fatalf("Failed to unmarshal error response: %v", err)
+	}
+	if errResp.Error.Message != expectedMessage {
+		t.Errorf("Expected error message '%s', got '%s'", expectedMessage, errResp.Error.Message)
+	}
+	if w.Code != expectedStatus {
+		t.Errorf("Expected status code %d, got %d", expectedStatus, w.Code)
+	}
+}
 
 func TestCreateUser(t *testing.T) {
 	// Create a new user handler
@@ -53,9 +74,7 @@ func TestCreateUser(t *testing.T) {
 			},
 			expectedStatus: http.StatusBadRequest,
 			validateFunc: func(t *testing.T, w *httptest.ResponseRecorder) {
-				if w.Body.String() != "Name is required\n" {
-					t.Errorf("Expected error message 'Name is required', got '%s'", w.Body.String())
-				}
+				validateErrorResponse(t, w, "Name is required", http.StatusBadRequest)
 			},
 		},
 		{
@@ -65,9 +84,7 @@ func TestCreateUser(t *testing.T) {
 			},
 			expectedStatus: http.StatusBadRequest,
 			validateFunc: func(t *testing.T, w *httptest.ResponseRecorder) {
-				if w.Body.String() != "Email is required\n" {
-					t.Errorf("Expected error message 'Email is required', got '%s'", w.Body.String())
-				}
+				validateErrorResponse(t, w, "Email is required", http.StatusBadRequest)
 			},
 		},
 		{
@@ -78,9 +95,7 @@ func TestCreateUser(t *testing.T) {
 			},
 			expectedStatus: http.StatusConflict,
 			validateFunc: func(t *testing.T, w *httptest.ResponseRecorder) {
-				if w.Body.String() != "Email is already in use\n" {
-					t.Errorf("Expected error message 'Email is already in use', got '%s'", w.Body.String())
-				}
+				validateErrorResponse(t, w, "Email is already in use", http.StatusConflict)
 			},
 		},
 	}
@@ -103,11 +118,16 @@ func TestCreateUser(t *testing.T) {
 			w := httptest.NewRecorder()
 
 			// Call handler
-			handler.CreateUser(w, req)
-
-			// Check status code
-			if w.Code != tc.expectedStatus {
-				t.Errorf("Expected status code %d, got %d", tc.expectedStatus, w.Code)
+			err = handler.CreateUser(w, req)
+			if err != nil {
+				// Error should be handled by middleware in production
+				if appErr, ok := err.(*errors.AppError); ok {
+					w.WriteHeader(appErr.HTTPStatusCode())
+					errors.WriteError(w, appErr)
+				} else {
+					w.WriteHeader(http.StatusInternalServerError)
+					errors.WriteError(w, errors.NewInternalError("Internal server error", err))
+				}
 			}
 
 			// Run validation function
@@ -161,9 +181,7 @@ func TestGetUser(t *testing.T) {
 			userID:         "non-existent-id",
 			expectedStatus: http.StatusNotFound,
 			validateFunc: func(t *testing.T, w *httptest.ResponseRecorder) {
-				if w.Body.String() != "User not found\n" {
-					t.Errorf("Expected error message 'User not found', got '%s'", w.Body.String())
-				}
+				validateErrorResponse(t, w, "User not found", http.StatusNotFound)
 			},
 		},
 	}
@@ -184,11 +202,16 @@ func TestGetUser(t *testing.T) {
 			req.URL.Path = "/api/users/" + tc.userID
 
 			// Call handler
-			handler.GetUser(w, req)
-
-			// Check status code
-			if w.Code != tc.expectedStatus {
-				t.Errorf("Expected status code %d, got %d", tc.expectedStatus, w.Code)
+			err = handler.GetUser(w, req)
+			if err != nil {
+				// Error should be handled by middleware in production
+				if appErr, ok := err.(*errors.AppError); ok {
+					w.WriteHeader(appErr.HTTPStatusCode())
+					errors.WriteError(w, appErr)
+				} else {
+					w.WriteHeader(http.StatusInternalServerError)
+					errors.WriteError(w, errors.NewInternalError("Internal server error", err))
+				}
 			}
 
 			// Run validation function
@@ -215,7 +238,17 @@ func TestListUsers(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	// Call handler
-	handler.ListUsers(w, req)
+	err = handler.ListUsers(w, req)
+	if err != nil {
+		// Error should be handled by middleware in production
+		if appErr, ok := err.(*errors.AppError); ok {
+			w.WriteHeader(appErr.HTTPStatusCode())
+			errors.WriteError(w, appErr)
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+			errors.WriteError(w, errors.NewInternalError("Internal server error", err))
+		}
+	}
 
 	// Check status code
 	if w.Code != http.StatusOK {
