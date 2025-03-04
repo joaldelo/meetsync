@@ -88,20 +88,45 @@ You can view the documentation in several ways:
 
 ## Running Tests
 
-The project includes a comprehensive test suite for all components.
+The project includes both unit tests and integration tests. Integration tests require a test environment to be set up and running.
+
+### Unit Tests
+
+To run only the unit tests (no integration tests):
 
 ```bash
-# Run all tests
+# Run all unit tests
+go test $(go list ./... | grep -v /tests/integration)
+
+# Run unit tests with coverage
+go test -cover $(go list ./... | grep -v /tests/integration)
+
+# Run unit tests for a specific package
+go test ./internal/handlers
+```
+
+### Integration Tests
+
+Integration tests require a test environment to be running. Make sure your test environment is properly configured before running these tests.
+
+```bash
+# Run only integration tests
+go test ./tests/integration
+
+# Run integration tests with verbose output
+go test -v ./tests/integration
+```
+
+### All Tests
+
+If you have the test environment running and want to run all tests:
+
+```bash
+# Run all tests (unit + integration)
 go test ./...
 
-# Run tests with coverage
+# Run all tests with coverage
 go test -cover ./...
-
-# Run tests for a specific package
-go test ./internal/handlers
-
-# Run integration tests
-go test ./tests/integration
 ```
 
 ## API Endpoints
